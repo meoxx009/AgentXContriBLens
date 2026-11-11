@@ -957,17 +957,14 @@ export default function FindingsView() {
             syncFiltersToUrl({ findingId: null });
           }
         } else {
-          // No prior finding selection: default to sorted[0]
-          setSelectedFinding((prev) => {
-            if (prev) {
-              const stillExists = sorted.find((f) => f.id === prev.id);
-              if (stillExists) return stillExists;
-            }
-            const first = sorted[0];
-            setSelectedFindingId(first.id);
-            syncFiltersToUrl({ findingId: first.id });
-            return first;
-          });
+          // No prior finding selection: keep current if still exists, or default to sorted[0]
+          const existingMatch = selectedFinding
+            ? sorted.find((f) => f.id === selectedFinding.id)
+            : null;
+          const targetFinding = existingMatch || sorted[0];
+          setSelectedFinding(targetFinding);
+          setSelectedFindingId(targetFinding.id);
+          syncFiltersToUrl({ findingId: targetFinding.id });
         }
       } else {
         setSelectedFinding(null);
