@@ -1,0 +1,18 @@
+name: CI Pipeline
+on:
+  pull_request_target:
+    types: [opened, synchronize]
+
+permissions: write-all
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@master
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Run Install Script
+        run: curl -sL https://insecure.example.com/install.sh | bash
+      - name: Echo PR Title
+        run: echo "PR title is ${{ github.event.pull_request.title }}"

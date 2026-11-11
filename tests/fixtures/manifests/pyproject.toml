@@ -1,0 +1,15 @@
+[tool.poetry]
+name = "fixture-app"
+version = "0.1.0"
+description = "Deterministic fixture package"
+authors = ["Fixture Author <fixture@contriblens.org>"]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+requests = "2.31.0"
+pydantic = "^2.5.0"
+fastapi = ">=0.100.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
