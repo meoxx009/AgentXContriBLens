@@ -19,6 +19,7 @@ import {
   RotateCw,
   ExternalLink,
   Terminal,
+  X,
 } from 'lucide-react';
 import { ScanSummary, Finding } from '@/types';
 import { GlassStepRail, SCAN_PIPELINE_STEPS } from '@/components/ui/GlassStepRail';
@@ -161,6 +162,8 @@ export default function ScanView() {
   const isRefreshingScansRef = useRef(false);
   const isScanningRef = useRef(false);
   const scanSeqRef = useRef(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const isUserClearedRef = useRef(false);
   const [recentScansError, setRecentScansError] = useState<{
     message: string;
     retry: () => void;
@@ -173,11 +176,35 @@ export default function ScanView() {
     return recentScans.filter((s) => s.id !== currentScanId);
   }, [recentScans, scanResult?.scan.id, activeScan?.id]);
 
+  // Explicit clear control: resets input, branch, activeScan, visible results and returns page to clean state
+  const handleClearRepoInput = useCallback(() => {
+    isUserClearedRef.current = true;
+    setRepoUrl('');
+    setFieldValue('repositoryUrl', '');
+    setBranch('');
+    setFieldValue('branch', '');
+    setScanResult(null);
+    setActiveScan(null);
+    setFailure(null);
+    clearErrors();
+    if (inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, [setFieldValue, setActiveScan, clearErrors]);
+
   // Handle repository URL change: switch to existing scan if available, or clear mismatched current scan
   const handleRepoUrlChange = useCallback((newUrl: string) => {
+    isUserClearedRef.current = true;
     setRepoUrl(newUrl);
     setFieldValue('repositoryUrl', newUrl);
     if (failure) setFailure(null);
+
+    if (!newUrl.trim()) {
+      setScanResult(null);
+      setActiveScan(null);
+      clearErrors();
+      return;
+    }
 
     const newCanonical = getCanonicalRepoId(newUrl);
     const currentCanonical = getCanonicalRepoId(scanResult?.scan.repoUrl);
@@ -209,7 +236,7 @@ export default function ScanView() {
 
     // Otherwise, clear visible current scan result so stale scan from another repo is not shown
     setScanResult(null);
-  }, [failure, scanResult?.scan.repoUrl, recentScans, setFieldValue, setActiveScan]);
+  }, [failure, scanResult?.scan.repoUrl, recentScans, setFieldValue, setActiveScan, clearErrors]);
 
   // Synchronize repository and scan state when recentScans loads or when returning to page
   useEffect(() => {
@@ -219,6 +246,7 @@ export default function ScanView() {
     if (scanIdParam) {
       const match = recentScans.find((s) => s.id === scanIdParam);
       if (match) {
+        isUserClearedRef.current = false;
         setRepoUrl(match.repoUrl);
         setFieldValue('repositoryUrl', match.repoUrl);
         setBranch(match.branch || '');
@@ -241,6 +269,7 @@ export default function ScanView() {
     if (urlParam) {
       const match = recentScans.find((s) => isSameRepository(s.repoUrl, urlParam));
       if (match) {
+        isUserClearedRef.current = false;
         setRepoUrl(match.repoUrl);
         setFieldValue('repositoryUrl', match.repoUrl);
         setBranch(match.branch || '');
@@ -261,6 +290,7 @@ export default function ScanView() {
 
     // Case 3: Returning from Findings or Live Agent without search params — ensure activeScan is restored
     if (!urlParam && !scanIdParam && activeScan) {
+      if (isUserClearedRef.current) return;
       const currentScanId = scanResult?.scan.id;
       if (!currentScanId || currentScanId !== activeScan.id) {
         setRepoUrl(activeScan.repoUrl);
@@ -510,6 +540,10 @@ export default function ScanView() {
                 if (scanSeqRef.current !== currentSeq) {
                   return;
                 }
+                if (!isSameRepository(cleanUrl, retryData.scan?.repoUrl)) {
+                  return;
+                }
+                isUserClearedRef.current = false;
                 const filesSkipped = retryData.scan.filesSkipped || 0;
                 const hasWarnings =
                   (retryData.warnings && retryData.warnings.length > 0) ||
@@ -577,6 +611,14 @@ export default function ScanView() {
         return;
       }
 
+      if (scanSeqRef.current !== currentSeq) {
+        return;
+      }
+      if (!isSameRepository(cleanUrl, data.scan?.repoUrl)) {
+        return;
+      }
+      isUserClearedRef.current = false;
+
       // Check if complete or complete_with_warnings per ROUTES_AND_STATES.md §4
       const filesSkipped = data.scan.filesSkipped || 0;
       const hasWarnings =
@@ -629,6 +671,7 @@ export default function ScanView() {
   };
 
   const handleQuickFill = (sampleUrl: string) => {
+    isUserClearedRef.current = false;
     handleRepoUrlChange(sampleUrl);
     setBranch('');
     setFieldValue('branch', '');
@@ -786,8 +829,9 @@ export default function ScanView() {
                 </span>
               )}
             </div>
-            <div className="relative">
+            <div className="relative flex items-center">
               <input
+                ref={inputRef}
                 id="scan-repositoryUrl"
                 name="repositoryUrl"
                 type="text"
@@ -805,7 +849,7 @@ export default function ScanView() {
                 aria-describedby="scan-repositoryUrl-error"
                 placeholder="https://github.com/owner/repository or owner/repo"
                 disabled={scanning}
-                className={`w-full min-h-[48px] pl-11 pr-11 py-3 bg-black/60 backdrop-blur-md border rounded-2xl text-base sm:text-sm text-textPrimary placeholder:text-textTertiary focus:outline-none font-mono transition-colors shadow-inner ${
+                className={`w-full min-h-[48px] pl-11 pr-24 py-3 bg-black/60 backdrop-blur-md border rounded-2xl text-base sm:text-sm text-textPrimary placeholder:text-textTertiary focus:outline-none font-mono transition-colors shadow-inner ${
                   repoValidation.status === 'valid' && !formErrors.repositoryUrl
                     ? 'border-emerald-500/50 focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400'
                     : (formErrors.repositoryUrl || (repoValidation.status === 'invalid' && !repoValidation.isValidating))
@@ -813,13 +857,28 @@ export default function ScanView() {
                     : 'border-borderDark focus:border-lemonChiffon focus:ring-1 focus:ring-lemonChiffon'
                 }`}
               />
-              <Search className="w-5 h-5 text-textMuted absolute left-3.5 top-4" />
-              {repoValidation.status === 'valid' && !formErrors.repositoryUrl && (
-                <CheckCircle2 className="w-5 h-5 text-emerald-400 absolute right-3.5 top-4 animate-fade-in" />
-              )}
-              {(formErrors.repositoryUrl || (repoValidation.status === 'invalid' && !repoValidation.isValidating)) && (
-                <AlertCircle className="w-5 h-5 text-red-400 absolute right-3.5 top-4 animate-fade-in" />
-              )}
+              <Search className="w-5 h-5 text-textMuted absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              
+              <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
+                {Boolean(repoUrl) && !scanning && (
+                  <button
+                    type="button"
+                    data-testid="clear-repo-input-btn"
+                    onClick={handleClearRepoInput}
+                    aria-label="Clear repository URL"
+                    title="Clear repository URL"
+                    className="min-w-[44px] min-h-[44px] w-11 h-11 rounded-full text-platinumSilver/70 hover:text-sustainableLinen hover:bg-white/10 active:scale-95 transition-all flex items-center justify-center press-spring touch-manipulation"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+                {repoValidation.status === 'valid' && !formErrors.repositoryUrl && (
+                  <CheckCircle2 className="w-5 h-5 text-emerald-400 animate-fade-in pointer-events-none mr-1" />
+                )}
+                {(formErrors.repositoryUrl || (repoValidation.status === 'invalid' && !repoValidation.isValidating)) && (
+                  <AlertCircle className="w-5 h-5 text-red-400 animate-fade-in pointer-events-none mr-1" />
+                )}
+              </div>
             </div>
             <FormFieldError
               id="scan-repositoryUrl-error"
@@ -1416,6 +1475,7 @@ export default function ScanView() {
                     <button
                       type="button"
                       onClick={() => {
+                        isUserClearedRef.current = false;
                         handleRepoUrlChange(scan.repoUrl);
                         if (scan.branch) {
                           setBranch(scan.branch);
