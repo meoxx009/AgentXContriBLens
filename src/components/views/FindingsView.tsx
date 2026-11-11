@@ -328,6 +328,9 @@ export default function FindingsView() {
   );
   const debouncedSearchQuery = useDebounceValue(searchQuery, 300);
   const fetchSequenceRef = useRef(0);
+  const lastSelectedIdRef = useRef<string | null>(null);
+  const hasInitializedSelectionRef = useRef(false);
+  const lastSyncedUrlParamRef = useRef<string | null>(null);
 
   // Dynamic set of available rule IDs from the scan findings
   const availableRuleIds = useMemo(() => {
@@ -458,8 +461,11 @@ export default function FindingsView() {
     }
   }, []);
 
-  // When activeScan changes, discard old suggestions immediately and load new ones
+  // When activeScan changes, discard old suggestions immediately, reset scan selection initialized state, and load new ones
   useEffect(() => {
+    hasInitializedSelectionRef.current = false;
+    lastSelectedIdRef.current = null;
+    lastSyncedUrlParamRef.current = null;
     if (activeScan?.id) {
       setSuggestions([]);
       setSuggestionsError(null);
@@ -522,15 +528,19 @@ export default function FindingsView() {
 
       if (updates.findingId !== undefined) {
         if (updates.findingId && updates.findingId.trim()) {
-          params.set('findingId', updates.findingId.trim());
+          const fid = updates.findingId.trim();
+          params.set('findingId', fid);
+          lastSyncedUrlParamRef.current = fid;
         } else {
           params.delete('findingId');
           params.delete('finding');
+          lastSyncedUrlParamRef.current = null;
         }
       } else {
-        const currentFid = selectedFinding?.id || selectedFindingId;
+        const currentFid = lastSelectedIdRef.current || selectedFinding?.id || selectedFindingId;
         if (currentFid) {
           params.set('findingId', currentFid);
+          lastSyncedUrlParamRef.current = currentFid;
         }
       }
 
@@ -651,6 +661,8 @@ export default function FindingsView() {
         `${finding.ruleId || 'GENERIC'}-${finding.file || 'root'}-${finding.lineStart || finding.line || 0}`;
       const safeFinding = finding.id ? finding : { ...finding, id: targetId };
 
+      lastSelectedIdRef.current = targetId;
+      lastSyncedUrlParamRef.current = targetId;
       setSelectedFinding(safeFinding);
       setSelectedFindingId(targetId);
       syncFiltersToUrl({ findingId: targetId });
@@ -909,14 +921,17 @@ export default function FindingsView() {
       setFindings(sorted);
       if (sorted.length > 0) {
         // Resolve intended target finding:
-        // Priority 1: URL search parameter 'findingId' or 'finding'
-        // Priority 2: In-memory selectedFindingId from AppContext
-        // Priority 3: SessionStorage for this scan
+        // Priority 1: In-memory active selection ref (user's recent click)
+        // Priority 2: URL search parameter 'findingId' or 'finding'
+        // Priority 3: In-memory selectedFindingId from AppContext
+        // Priority 4: SessionStorage for this scan
         let targetId =
+          lastSelectedIdRef.current ||
           (typeof window !== 'undefined'
             ? new URLSearchParams(window.location.search).get('findingId') ||
               new URLSearchParams(window.location.search).get('finding')
-            : null) || selectedFindingId;
+            : null) ||
+          selectedFindingId;
 
         if (!targetId && typeof window !== 'undefined') {
           try {
@@ -927,8 +942,19 @@ export default function FindingsView() {
         }
 
         if (targetId) {
-          const matched = sorted.find((f) => f.id === targetId);
+          const cleanTarget = targetId.trim();
+          const decodedTarget = decodeURIComponent(cleanTarget);
+          const matched = sorted.find(
+            (f) =>
+              f.id === cleanTarget ||
+              f.id === decodedTarget ||
+              (f.id && decodeURIComponent(f.id) === decodedTarget) ||
+              (f.fingerprint && (f.fingerprint === cleanTarget || f.fingerprint === decodedTarget))
+          );
+
           if (matched) {
+            lastSelectedIdRef.current = matched.id;
+            lastSyncedUrlParamRef.current = matched.id;
             setSelectedFinding(matched);
             setSelectedFindingId(matched.id);
             syncFiltersToUrl({ findingId: matched.id });
@@ -942,9 +968,11 @@ export default function FindingsView() {
                 }
               }, 60);
             }
-          } else {
+          } else if (!hasInitializedSelectionRef.current) {
             // Target ID was specified but is invalid, deleted, or unauthorized:
             // Safely ignore without selecting a wrong fallback finding
+            lastSelectedIdRef.current = null;
+            lastSyncedUrlParamRef.current = null;
             setSelectedFinding(null);
             setSelectedFindingId(null);
             if (typeof window !== 'undefined') {
@@ -955,18 +983,28 @@ export default function FindingsView() {
               }
             }
             syncFiltersToUrl({ findingId: null });
+          } else {
+            // If already initialized and active selection was filtered out, fallback to first sorted
+            const fallback = sorted[0];
+            lastSelectedIdRef.current = fallback.id;
+            lastSyncedUrlParamRef.current = fallback.id;
+            setSelectedFinding(fallback);
+            setSelectedFindingId(fallback.id);
+            syncFiltersToUrl({ findingId: fallback.id });
           }
         } else {
-          // No prior finding selection: keep current if still exists, or default to sorted[0]
-          const existingMatch = selectedFinding
-            ? sorted.find((f) => f.id === selectedFinding.id)
-            : null;
-          const targetFinding = existingMatch || sorted[0];
+          // No prior finding selection: default to sorted[0]
+          const targetFinding = sorted[0];
+          lastSelectedIdRef.current = targetFinding.id;
+          lastSyncedUrlParamRef.current = targetFinding.id;
           setSelectedFinding(targetFinding);
           setSelectedFindingId(targetFinding.id);
           syncFiltersToUrl({ findingId: targetFinding.id });
         }
+        hasInitializedSelectionRef.current = true;
       } else {
+        lastSelectedIdRef.current = null;
+        lastSyncedUrlParamRef.current = null;
         setSelectedFinding(null);
         setSelectedFindingId(null);
       }
@@ -987,25 +1025,76 @@ export default function FindingsView() {
     }
   };
 
-  // Listen for browser Back/Forward (searchParams change or popstate)
+  // Listen for browser Back/Forward (popstate events)
   useEffect(() => {
-    if (findings.length === 0) return;
-    const currentParam = searchParams?.get('findingId') || searchParams?.get('finding');
-    if (!currentParam) return;
+    if (typeof window === 'undefined') return;
 
-    const cleanParam = currentParam.trim();
+    const handlePopState = () => {
+      if (findings.length === 0) return;
+      const params = new URLSearchParams(window.location.search);
+      const currentParam = params.get('findingId') || params.get('finding');
+      if (!currentParam) {
+        lastSelectedIdRef.current = null;
+        lastSyncedUrlParamRef.current = null;
+        setSelectedFinding(null);
+        setSelectedFindingId(null);
+        return;
+      }
+
+      const cleanParam = currentParam.trim();
+      const decodedParam = decodeURIComponent(cleanParam);
+      const match = findings.find(
+        (f) =>
+          f.id === cleanParam ||
+          f.id === decodedParam ||
+          (f.id && decodeURIComponent(f.id) === decodedParam) ||
+          (f.fingerprint &&
+            (f.fingerprint === cleanParam || f.fingerprint === decodedParam))
+      );
+
+      if (match && match.id !== lastSelectedIdRef.current) {
+        lastSelectedIdRef.current = match.id;
+        lastSyncedUrlParamRef.current = match.id;
+        setSelectedFinding(match);
+        setSelectedFindingId(match.id);
+        ensureFindingVisible(match);
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, [findings, setSelectedFindingId, ensureFindingVisible]);
+
+  // Handle external Next.js router navigation into this page with findingId search param
+  const urlFindingId = searchParams?.get('findingId') || searchParams?.get('finding');
+  useEffect(() => {
+    if (!urlFindingId || findings.length === 0) return;
+    const cleanParam = urlFindingId.trim();
     const decodedParam = decodeURIComponent(cleanParam);
+
+    // Guard: If we already have an active selection in memory, stale searchParams
+    // (which Next.js does not update on replaceState) must NEVER overwrite the active selection
     if (
-      selectedFinding &&
-      (selectedFinding.id === cleanParam ||
-        selectedFinding.id === decodedParam ||
-        (selectedFinding.id && decodeURIComponent(selectedFinding.id) === decodedParam) ||
-        (selectedFinding.fingerprint &&
-          (selectedFinding.fingerprint === cleanParam ||
-            selectedFinding.fingerprint === decodedParam)))
+      lastSelectedIdRef.current &&
+      lastSelectedIdRef.current !== cleanParam &&
+      lastSelectedIdRef.current !== decodedParam
     ) {
       return;
     }
+
+    // If this URL param already matches our current selected finding, do nothing
+    if (lastSelectedIdRef.current === cleanParam || lastSelectedIdRef.current === decodedParam) {
+      return;
+    }
+
+    // If we already synced this exact external URL parameter, do nothing
+    if (lastSyncedUrlParamRef.current === cleanParam || lastSyncedUrlParamRef.current === decodedParam) {
+      return;
+    }
+
+    lastSyncedUrlParamRef.current = cleanParam;
 
     const match = findings.find(
       (f) =>
@@ -1017,11 +1106,12 @@ export default function FindingsView() {
     );
 
     if (match) {
+      lastSelectedIdRef.current = match.id;
       setSelectedFinding(match);
       setSelectedFindingId(match.id);
       ensureFindingVisible(match);
     }
-  }, [searchParams, findings, selectedFinding, setSelectedFindingId, ensureFindingVisible]);
+  }, [urlFindingId, findings, setSelectedFindingId, ensureFindingVisible]);
 
   const handleToggleReview = async (finding: Finding) => {
     if (updatingReviewId === finding.id) return;
@@ -2130,6 +2220,8 @@ export default function FindingsView() {
                       <button
                         type="button"
                         onClick={() => {
+                          lastSelectedIdRef.current = null;
+                          lastSyncedUrlParamRef.current = null;
                           setSelectedFinding(null);
                           setSelectedFindingId(null);
                           syncFiltersToUrl({ findingId: null });
