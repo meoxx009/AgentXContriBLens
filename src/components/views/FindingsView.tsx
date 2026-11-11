@@ -644,27 +644,54 @@ export default function FindingsView() {
 
   const handleSelectFinding = useCallback(
     (finding: Finding) => {
-      setSelectedFinding(finding);
-      setSelectedFindingId(finding.id);
-      syncFiltersToUrl({ findingId: finding.id });
-      if (typeof window !== 'undefined' && window.innerWidth < 1024) {
-        const detailEl = document.getElementById('finding-detail-panel');
-        if (detailEl) {
-          detailEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      if (!finding) return;
+      const targetId =
+        finding.id ||
+        finding.fingerprint ||
+        `${finding.ruleId || 'GENERIC'}-${finding.file || 'root'}-${finding.lineStart || finding.line || 0}`;
+      const safeFinding = finding.id ? finding : { ...finding, id: targetId };
+
+      setSelectedFinding(safeFinding);
+      setSelectedFindingId(targetId);
+      syncFiltersToUrl({ findingId: targetId });
+
+      if (typeof window !== 'undefined') {
+        try {
+          sessionStorage.setItem(
+            `contriblens_selected_finding_${activeScan?.id || 'active'}`,
+            targetId
+          );
+        } catch {
+          // Safe ignore in restricted browser environments
+        }
+
+        if (window.innerWidth < 1024) {
+          const detailEl = document.getElementById('finding-detail-panel');
+          if (detailEl) {
+            detailEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
         }
       }
     },
-    [setSelectedFindingId, syncFiltersToUrl]
+    [activeScan?.id, setSelectedFindingId, syncFiltersToUrl]
   );
 
   const handleSelectSuggestionFinding = useCallback(
     (findingId: string) => {
-      const targetFinding = findings.find((f) => f.id === findingId);
+      const cleanId = (findingId || '').trim();
+      const decoded = decodeURIComponent(cleanId);
+      const targetFinding = findings.find(
+        (f) =>
+          f.id === cleanId ||
+          f.id === decoded ||
+          (f.id && decodeURIComponent(f.id) === decoded) ||
+          (f.fingerprint && (f.fingerprint === cleanId || f.fingerprint === decoded))
+      );
       if (targetFinding) {
         handleSelectFinding(targetFinding);
       }
       if (typeof window !== 'undefined') {
-        const el = document.getElementById(`finding-${findingId}`);
+        const el = document.getElementById(`finding-${cleanId}`) || document.getElementById(`finding-${decoded}`);
         if (el) {
           el.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
@@ -967,19 +994,37 @@ export default function FindingsView() {
   useEffect(() => {
     if (findings.length === 0) return;
     const currentParam = searchParams?.get('findingId') || searchParams?.get('finding');
-    if (currentParam && currentParam !== selectedFinding?.id) {
-      const match = findings.find((f) => f.id === currentParam);
-      if (match) {
-        setSelectedFinding(match);
-        setSelectedFindingId(match.id);
-        ensureFindingVisible(match);
-      } else {
-        // Invalid or unauthorized finding ID in popstate/history: safely ignore!
-        setSelectedFinding(null);
-        setSelectedFindingId(null);
-      }
+    if (!currentParam) return;
+
+    const cleanParam = currentParam.trim();
+    const decodedParam = decodeURIComponent(cleanParam);
+    if (
+      selectedFinding &&
+      (selectedFinding.id === cleanParam ||
+        selectedFinding.id === decodedParam ||
+        (selectedFinding.id && decodeURIComponent(selectedFinding.id) === decodedParam) ||
+        (selectedFinding.fingerprint &&
+          (selectedFinding.fingerprint === cleanParam ||
+            selectedFinding.fingerprint === decodedParam)))
+    ) {
+      return;
     }
-  }, [searchParams, findings, selectedFinding?.id, setSelectedFindingId, ensureFindingVisible]);
+
+    const match = findings.find(
+      (f) =>
+        f.id === cleanParam ||
+        f.id === decodedParam ||
+        (f.id && decodeURIComponent(f.id) === decodedParam) ||
+        (f.fingerprint &&
+          (f.fingerprint === cleanParam || f.fingerprint === decodedParam))
+    );
+
+    if (match) {
+      setSelectedFinding(match);
+      setSelectedFindingId(match.id);
+      ensureFindingVisible(match);
+    }
+  }, [searchParams, findings, selectedFinding, setSelectedFindingId, ensureFindingVisible]);
 
   const handleToggleReview = async (finding: Finding) => {
     if (updatingReviewId === finding.id) return;
@@ -1885,11 +1930,15 @@ export default function FindingsView() {
 
             <ul role="list" className="space-y-2.5 max-h-[780px] overflow-y-auto pr-1 no-scrollbar">
               {filteredFindings.map((finding) => {
-                const isSelected = selectedFinding?.id === finding.id;
-                const isChecked = selectedFindingIds.has(finding.id);
+                const rowId =
+                  finding.id ||
+                  finding.fingerprint ||
+                  `${finding.ruleId || 'GEN'}-${finding.file || 'root'}-${finding.lineStart || finding.line || 0}`;
+                const isSelected = selectedFinding?.id === finding.id || selectedFinding?.id === rowId;
+                const isChecked = selectedFindingIds.has(finding.id) || selectedFindingIds.has(rowId);
                 const isCritical = finding.severity?.toUpperCase() === 'CRITICAL';
                 const readiness = finding.readiness;
-                const topReason = readiness?.reasons?.[0];
+                const topReason = Array.isArray(readiness?.reasons) ? readiness.reasons[0] : undefined;
 
                 // P8 Task 1: Selected card = tangerine border; CRITICAL = Rosewood
                 let cardStyle = 'glass-panel hover:border-platinumSilver/30';
@@ -1904,9 +1953,20 @@ export default function FindingsView() {
                 }
 
                 return (
-                  <li role="listitem" key={finding.id} id={`finding-${finding.id}`}>
+                  <li role="listitem" key={finding.id || rowId} id={`finding-${finding.id}`}>
                     <div
-                      className={`w-full p-4 rounded-xl border transition-all ${cardStyle} flex items-start gap-2.5`}
+                      className={`w-full p-4 rounded-xl border transition-all ${cardStyle} flex items-start gap-2.5 cursor-pointer touch-manipulation focus:outline-none focus:ring-1 focus:ring-lemonChiffon/60`}
+                      onClick={() => handleSelectFinding(finding)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          handleSelectFinding(finding);
+                        }
+                      }}
+                      tabIndex={0}
+                      role="button"
+                      aria-pressed={isSelected}
+                      aria-label={`View details for finding: ${finding.title}`}
                     >
                       {/* Individual Row Checkbox with Accessible Touch Target */}
                       <label
@@ -1926,14 +1986,7 @@ export default function FindingsView() {
                       </label>
 
                       {/* Card Body Clickable Region */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          handleSelectFinding(finding);
-                        }}
-                        aria-pressed={isSelected}
-                        className="flex-1 min-w-0 text-left cursor-pointer focus:outline-none touch-manipulation"
-                      >
+                      <div className="flex-1 min-w-0 text-left">
                         {/* Top Badges Row: Severity (Text + Icon), Readiness, Diff Status */}
                         <div className="flex flex-wrap items-center justify-between text-[11px] mb-2 gap-1.5">
                           <div className="flex flex-wrap items-center gap-1.5">
@@ -1947,7 +2000,7 @@ export default function FindingsView() {
 
                             {readiness && (
                               <span className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider border ${getReadinessBadge(readiness.label)}`}>
-                                Readiness: {readiness.total}/100
+                                Readiness: {readiness.total ?? 0}/100
                               </span>
                             )}
 
@@ -1987,7 +2040,7 @@ export default function FindingsView() {
                           <span className="truncate max-w-[200px]">{finding.file || 'Repository Root'}</span>
                           <ChevronRight className="w-3.5 h-3.5 text-textMuted shrink-0" />
                         </div>
-                      </button>
+                      </div>
                     </div>
                   </li>
                 );
@@ -2016,11 +2069,11 @@ export default function FindingsView() {
                       <SeverityBadge severity={selectedFinding.severity} />
 
                       <span className="text-xs px-2.5 py-0.5 rounded-full bg-black border border-borderDark text-textMuted uppercase font-mono">
-                        {selectedFinding.category}
+                        {selectedFinding.category || 'general'}
                       </span>
 
                       <span className="text-[11px] font-mono text-lemonChiffon bg-blackHole px-2 py-0.5 rounded border border-borderDark">
-                        Rule: {selectedFinding.ruleId}
+                        Rule: {selectedFinding.ruleId || 'GENERIC-SECURITY-RULE'}
                       </span>
 
                       <span className="text-[11px] font-mono text-textMuted bg-blackHole px-2 py-0.5 rounded border border-borderDark">
@@ -2065,15 +2118,31 @@ export default function FindingsView() {
                         <span>{selectedFinding.reviewed ? 'Reviewed ✓' : 'Mark as Reviewed'}</span>
                       </button>
 
-                      {/* Deep Link to Detail Page */}
+                      {/* Deep Link to Dedicated Detail Page */}
                       <Link
-                        href={`/app/findings/${selectedFinding.id}`}
+                        href={`/app/findings/${encodeURIComponent(selectedFinding.id)}`}
                         className="min-w-[44px] min-h-[44px] flex items-center justify-center p-2 rounded-xl text-textMuted hover:text-lemonChiffon hover:bg-black/40 border border-borderDark transition-colors press-spring touch-manipulation"
                         title="Open finding deep link in dedicated page"
                         aria-label="Open finding deep link in dedicated page"
+                        onClick={(e) => e.stopPropagation()}
                       >
                         <ExternalLink className="w-4 h-4" />
                       </Link>
+
+                      {/* Close / Deselect Control */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedFinding(null);
+                          setSelectedFindingId(null);
+                          syncFiltersToUrl({ findingId: null });
+                        }}
+                        className="min-w-[44px] min-h-[44px] flex items-center justify-center p-2 rounded-xl text-textMuted hover:text-white hover:bg-black/40 border border-borderDark transition-colors press-spring touch-manipulation"
+                        title="Close detail panel"
+                        aria-label="Close detail panel"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
                     </div>
                   </div>
 
@@ -2239,8 +2308,8 @@ export default function FindingsView() {
 
                 {/* P8 Task 5: Skills Gap panel with Pale Lavender accents & impact score */}
                 <SkillsGapPanel
-                  skills={selectedFinding.skills}
-                  learningResources={selectedFinding.learningResources}
+                  skills={Array.isArray(selectedFinding.skills) ? selectedFinding.skills : []}
+                  learningResources={Array.isArray(selectedFinding.learningResources) ? selectedFinding.learningResources : []}
                   difficulty={selectedFinding.readiness?.difficulty}
                   category={selectedFinding.category}
                   contributorImpact={15}
@@ -2287,16 +2356,16 @@ export default function FindingsView() {
                           <span className="text-textMuted uppercase tracking-wider font-semibold text-[10px]">
                             Contribution Readiness
                           </span>
-                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider border ${getReadinessBadge(selectedFinding.readiness.label)}`}>
-                            {selectedFinding.readiness.label.replace(/-/g, ' ')}
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider border ${getReadinessBadge(selectedFinding.readiness?.label)}`}>
+                            {selectedFinding.readiness?.label ? selectedFinding.readiness.label.replace(/-/g, ' ') : 'Standard Contribution'}
                           </span>
                         </div>
                         <div className="flex items-baseline gap-2">
                           <span className="text-2xl font-bold font-mono text-lemonChiffon">
-                            {selectedFinding.readiness.total}
+                            {selectedFinding.readiness?.total ?? 50}
                           </span>
                           <span className="text-textMuted text-[10px] font-mono">/ 100</span>
-                          {selectedFinding.readiness.estimatedMinutes && (
+                          {selectedFinding.readiness?.estimatedMinutes && (
                             <span className="text-textMuted text-[10px] font-mono ml-auto">
                               ~{selectedFinding.readiness.estimatedMinutes} mins
                             </span>
@@ -2323,37 +2392,37 @@ export default function FindingsView() {
                         <div className="p-2 rounded-lg bg-blackHole border border-borderDark space-y-1">
                           <div className="text-textMuted text-[10px]">Clarity</div>
                           <div className="font-mono font-bold text-lemonChiffon">
-                            {selectedFinding.readiness.evidenceClarity} <span className="text-textMuted font-normal">/ 25</span>
+                            {selectedFinding.readiness.evidenceClarity ?? 0} <span className="text-textMuted font-normal">/ 25</span>
                           </div>
                         </div>
                         <div className="p-2 rounded-lg bg-blackHole border border-borderDark space-y-1">
                           <div className="text-textMuted text-[10px]">Scope</div>
                           <div className="font-mono font-bold text-lemonChiffon">
-                            {selectedFinding.readiness.scopeSimplicity} <span className="text-textMuted font-normal">/ 20</span>
+                            {selectedFinding.readiness.scopeSimplicity ?? 0} <span className="text-textMuted font-normal">/ 20</span>
                           </div>
                         </div>
                         <div className="p-2 rounded-lg bg-blackHole border border-borderDark space-y-1">
                           <div className="text-textMuted text-[10px]">Testability</div>
                           <div className="font-mono font-bold text-lemonChiffon">
-                            {selectedFinding.readiness.testability} <span className="text-textMuted font-normal">/ 20</span>
+                            {selectedFinding.readiness.testability ?? 0} <span className="text-textMuted font-normal">/ 20</span>
                           </div>
                         </div>
                         <div className="p-2 rounded-lg bg-blackHole border border-borderDark space-y-1">
                           <div className="text-textMuted text-[10px]">Skill Accessibility</div>
                           <div className="font-mono font-bold text-lemonChiffon">
-                            {selectedFinding.readiness.skillAccessibility} <span className="text-textMuted font-normal">/ 20</span>
+                            {selectedFinding.readiness.skillAccessibility ?? 0} <span className="text-textMuted font-normal">/ 20</span>
                           </div>
                         </div>
                         <div className="p-2 rounded-lg bg-blackHole border border-borderDark space-y-1">
                           <div className="text-textMuted text-[10px]">Context</div>
                           <div className="font-mono font-bold text-lemonChiffon">
-                            {selectedFinding.readiness.contextCompleteness} <span className="text-textMuted font-normal">/ 15</span>
+                            {selectedFinding.readiness.contextCompleteness ?? 0} <span className="text-textMuted font-normal">/ 15</span>
                           </div>
                         </div>
                       </div>
 
                       {/* Reasons list */}
-                      {selectedFinding.readiness.reasons.length > 0 && (
+                      {Array.isArray(selectedFinding.readiness.reasons) && selectedFinding.readiness.reasons.length > 0 && (
                         <div className="pt-2 border-t border-borderDark/40 space-y-1">
                           <span className="text-[10px] font-mono uppercase text-lemonChiffon font-semibold">Positive Indicators:</span>
                           <ul className="space-y-1">
@@ -2368,7 +2437,7 @@ export default function FindingsView() {
                       )}
 
                       {/* Blockers list */}
-                      {selectedFinding.readiness.blockers && selectedFinding.readiness.blockers.length > 0 && (
+                      {Array.isArray(selectedFinding.readiness.blockers) && selectedFinding.readiness.blockers.length > 0 && (
                         <div className="pt-2 border-t border-borderDark/40 space-y-1">
                           <span className="text-[10px] font-mono uppercase text-red-300 font-semibold">Disclosure Blockers:</span>
                           <ul className="space-y-1">
@@ -2389,12 +2458,16 @@ export default function FindingsView() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2 border-t border-borderDark">
                   <div className="p-3.5 rounded-xl bg-black border border-borderDark text-xs text-textPrimary space-y-1">
                     <span className="font-semibold text-lemonChiffon block">Suggested Action</span>
-                    <p className="text-textMuted leading-relaxed">{selectedFinding.fixHint}</p>
+                    <p className="text-textMuted leading-relaxed">
+                      {selectedFinding.fixHint || 'Follow standard open-source contribution workflow to remediate this finding.'}
+                    </p>
                   </div>
 
                   <div className="p-3.5 rounded-xl bg-black border border-borderDark text-xs text-textPrimary space-y-1">
                     <span className="font-semibold text-textMuted uppercase tracking-wider block">Impact Summary</span>
-                    <p className="text-textMuted leading-relaxed">{selectedFinding.impact}</p>
+                    <p className="text-textMuted leading-relaxed">
+                      {selectedFinding.impact || 'Addressing this finding improves repository security and code quality.'}
+                    </p>
                   </div>
                 </div>
 

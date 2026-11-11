@@ -395,7 +395,16 @@ export const db = {
     return findings;
   },
   getFindingById: (id: string): Finding | undefined => {
-    return ensureDb().findings.find((f) => f.id === id);
+    if (!id) return undefined;
+    const cleanId = id.trim();
+    const decoded = decodeURIComponent(cleanId);
+    return ensureDb().findings.find(
+      (f) =>
+        f.id === cleanId ||
+        f.id === decoded ||
+        (f.id && decodeURIComponent(f.id) === decoded) ||
+        (f.fingerprint && (f.fingerprint === cleanId || f.fingerprint === decoded))
+    );
   },
   saveFindings: (newFindings: Finding[]): Finding[] => {
     const data = ensureDb();

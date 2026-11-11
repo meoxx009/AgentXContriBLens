@@ -69,17 +69,27 @@ const DEFAULT_LEARNING_RESOURCES: Record<string, LearningResource[]> = {
  * skills list, 2-3 free learning links, and contributor impact.
  */
 export function SkillsGapPanel({
-  skills = ['Git', 'Code Review', 'Principle of least privilege'],
+  skills,
   learningResources,
   contributorImpact = 15,
   difficulty = 'beginner',
   category = 'github-actions',
   className = '',
 }: SkillsGapPanelProps) {
+  const safeSkills =
+    Array.isArray(skills) && skills.length > 0
+      ? skills
+      : ['Git', 'Code Review', 'Principle of least privilege'];
+
+  const fallbackKey = category ? category.toLowerCase() : 'github-actions';
   const activeResources =
-    learningResources && learningResources.length > 0
+    Array.isArray(learningResources) && learningResources.length > 0
       ? learningResources
-      : DEFAULT_LEARNING_RESOURCES[category] || DEFAULT_LEARNING_RESOURCES['github-actions'];
+      : DEFAULT_LEARNING_RESOURCES[fallbackKey] ||
+        DEFAULT_LEARNING_RESOURCES['github-actions'] ||
+        [];
+
+  const displayResources = Array.isArray(activeResources) ? activeResources.slice(0, 3) : [];
 
   return (
     <div
@@ -112,7 +122,7 @@ export function SkillsGapPanel({
           Required Competencies:
         </span>
         <div className="flex flex-wrap gap-1.5">
-          {skills.map((skill) => (
+          {safeSkills.map((skill) => (
             <span
               key={skill}
               className="px-2.5 py-1 rounded-full bg-black/80 text-paleLavender border border-paleLavender/25 text-xs font-mono"
@@ -129,7 +139,7 @@ export function SkillsGapPanel({
           Free Curated Learning Resources:
         </span>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          {activeResources.slice(0, 3).map((res, idx) => (
+          {displayResources.map((res, idx) => (
             <a
               key={idx}
               href={res.url}

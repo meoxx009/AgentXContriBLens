@@ -336,11 +336,6 @@ export function createFindingEvidence(params: {
   const safeEvidence = redactSecrets((params.evidence || '').trim());
   const evidenceHash = computeEvidenceHash(safeEvidence);
 
-  // Stable ID across repeated scans for identical rule and file location
-  const fileClean = params.file ? params.file.replace(/[^a-zA-Z0-9_-]/g, '_') : 'root';
-  const lineClean = params.lineStart ? `_L${params.lineStart}` : '';
-  const id = `fnd_${params.ruleId}_${fileClean}${lineClean}`.slice(0, 80);
-
   const skills = params.skills ?? getDefaultSkills(params.category, params.ruleId);
   const learningResources = params.learningResources ?? getDefaultLearningResources(params.category, params.ruleId);
   const contributorLevelImpact = params.contributorLevelImpact ?? getDefaultContributorImpact(params.category, params.ruleId);
@@ -352,6 +347,13 @@ export function createFindingEvidence(params: {
   const rawCore = `${normRule}|${normFile}|${normLine}|${safeEvidence.replace(/\s+/g, ' ')}`;
   const defaultFingerprint = createHash('sha256').update(rawCore).digest('hex').substring(0, 24);
   const fingerprint = params.fingerprint ?? defaultFingerprint;
+
+  // Stable, collision-free unique ID across repeated scans for identical rule, location, and evidence
+  const ruleClean = (params.ruleId || 'GENERIC').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 30);
+  const fileClean = params.file ? params.file.replace(/[^a-zA-Z0-9_-]/g, '_').slice(-30) : 'root';
+  const lineClean = params.lineStart ? `_L${params.lineStart}` : '';
+  const hashSuffix = fingerprint.substring(0, 8);
+  const id = `fnd_${ruleClean}_${fileClean}${lineClean}_${hashSuffix}`.slice(0, 80);
 
   return {
     id,

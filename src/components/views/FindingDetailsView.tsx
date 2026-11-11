@@ -356,7 +356,7 @@ export default function FindingDetailPage({
     }
 
     try {
-      const directRes = await fetch(`/api/findings/${findingId}`);
+      const directRes = await fetch(`/api/findings/${encodeURIComponent(findingId)}`);
       if (directRes.ok) {
         const directData = await directRes.json();
         if (directData.finding) {
@@ -1053,12 +1053,12 @@ export default function FindingDetailPage({
                     Contribution Readiness Score
                   </span>
                   <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider border ${getReadinessBadge(readiness.label)}`}>
-                    {readiness.label.replace(/-/g, ' ')}
+                    {readiness.label ? readiness.label.replace(/-/g, ' ') : 'Standard Contribution'}
                   </span>
                 </div>
                 <div className="flex items-baseline gap-2">
                   <span className="text-2xl font-bold font-mono text-lemonChiffon">
-                    {readiness.total}
+                    {readiness.total ?? 50}
                   </span>
                   <span className="text-textMuted text-[10px] font-mono">/ 100</span>
                   {readiness.estimatedMinutes && (
@@ -1088,37 +1088,37 @@ export default function FindingDetailPage({
                 <div className="p-2.5 rounded-lg bg-blackHole border border-borderDark space-y-1">
                   <div className="text-textMuted text-[10px]">Evidence Clarity</div>
                   <div className="font-mono font-bold text-lemonChiffon">
-                    {readiness.evidenceClarity} <span className="text-textMuted font-normal">/ 25</span>
+                    {readiness.evidenceClarity ?? 0} <span className="text-textMuted font-normal">/ 25</span>
                   </div>
                 </div>
                 <div className="p-2.5 rounded-lg bg-blackHole border border-borderDark space-y-1">
                   <div className="text-textMuted text-[10px]">Scope Simplicity</div>
                   <div className="font-mono font-bold text-lemonChiffon">
-                    {readiness.scopeSimplicity} <span className="text-textMuted font-normal">/ 20</span>
+                    {readiness.scopeSimplicity ?? 0} <span className="text-textMuted font-normal">/ 20</span>
                   </div>
                 </div>
                 <div className="p-2.5 rounded-lg bg-blackHole border border-borderDark space-y-1">
                   <div className="text-textMuted text-[10px]">Testability</div>
                   <div className="font-mono font-bold text-lemonChiffon">
-                    {readiness.testability} <span className="text-textMuted font-normal">/ 20</span>
+                    {readiness.testability ?? 0} <span className="text-textMuted font-normal">/ 20</span>
                   </div>
                 </div>
                 <div className="p-2.5 rounded-lg bg-blackHole border border-borderDark space-y-1">
                   <div className="text-textMuted text-[10px]">Skill Accessibility</div>
                   <div className="font-mono font-bold text-lemonChiffon">
-                    {readiness.skillAccessibility} <span className="text-textMuted font-normal">/ 20</span>
+                    {readiness.skillAccessibility ?? 0} <span className="text-textMuted font-normal">/ 20</span>
                   </div>
                 </div>
                 <div className="p-2.5 rounded-lg bg-blackHole border border-borderDark space-y-1">
                   <div className="text-textMuted text-[10px]">Context Completeness</div>
                   <div className="font-mono font-bold text-lemonChiffon">
-                    {readiness.contextCompleteness} <span className="text-textMuted font-normal">/ 15</span>
+                    {readiness.contextCompleteness ?? 0} <span className="text-textMuted font-normal">/ 15</span>
                   </div>
                 </div>
               </div>
 
               {/* Reasons */}
-              {readiness.reasons.length > 0 && (
+              {Array.isArray(readiness.reasons) && readiness.reasons.length > 0 && (
                 <div className="pt-2 border-t border-borderDark/40 space-y-1">
                   <span className="text-[10px] font-mono uppercase text-lemonChiffon font-semibold">Positive Reasons:</span>
                   <ul className="space-y-1">
@@ -1133,7 +1133,7 @@ export default function FindingDetailPage({
               )}
 
               {/* Blockers */}
-              {readiness.blockers && readiness.blockers.length > 0 && (
+              {Array.isArray(readiness.blockers) && readiness.blockers.length > 0 && (
                 <div className="pt-2 border-t border-borderDark/40 space-y-1">
                   <span className="text-[10px] font-mono uppercase text-red-300 font-semibold">Blockers:</span>
                   <ul className="space-y-1">
