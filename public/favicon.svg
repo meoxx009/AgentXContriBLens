@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <!-- Crisp high-contrast favicon mark for 16px/32px/48px tab displays -->
+  <rect width="32" height="32" rx="7" fill="#141416" />
+  <path
+    d="M 24 7 L 13 7 L 7 13 L 7 19 L 13 25 L 21 25 L 21 21 L 15 21 L 11 17 L 11 15 L 15 11 L 24 11 Z"
+    fill="#E5E4E2"
+  />
+  <circle cx="16" cy="16" r="4.5" stroke="#FF6D1F" stroke-width="2" fill="#000000" />
+  <line x1="19.5" y1="19.5" x2="24" y2="24" stroke="#FF6D1F" stroke-width="2.5" stroke-linecap="round" />
+</svg>
