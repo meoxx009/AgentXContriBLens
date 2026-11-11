@@ -331,6 +331,9 @@ export default function FindingsView() {
   const lastSelectedIdRef = useRef<string | null>(null);
   const hasInitializedSelectionRef = useRef(false);
   const lastSyncedUrlParamRef = useRef<string | null>(null);
+  const previousUrlFindingIdRef = useRef<string | null>(
+    searchParams?.get('findingId') || searchParams?.get('finding') || null
+  );
 
   // Dynamic set of available rule IDs from the scan findings
   const availableRuleIds = useMemo(() => {
@@ -701,6 +704,7 @@ export default function FindingsView() {
       );
       if (targetFinding) {
         handleSelectFinding(targetFinding);
+        ensureFindingVisible(targetFinding);
       }
       if (typeof window !== 'undefined') {
         const el = document.getElementById(`finding-${cleanId}`) || document.getElementById(`finding-${decoded}`);
@@ -709,7 +713,7 @@ export default function FindingsView() {
         }
       }
     },
-    [findings, handleSelectFinding]
+    [findings, handleSelectFinding, ensureFindingVisible]
   );
 
   // Clear bulk selection when active filters, search query, or activeScan change
@@ -1074,23 +1078,18 @@ export default function FindingsView() {
     const cleanParam = urlFindingId.trim();
     const decodedParam = decodeURIComponent(cleanParam);
 
-    // Guard: If we already have an active selection in memory, stale searchParams
-    // (which Next.js does not update on replaceState) must NEVER overwrite the active selection
-    if (
-      lastSelectedIdRef.current &&
-      lastSelectedIdRef.current !== cleanParam &&
-      lastSelectedIdRef.current !== decodedParam
-    ) {
+    // If urlFindingId has not changed from what Next.js router provided on page load or previous navigation,
+    // then any divergence from lastSelectedIdRef is due to a local user click
+    // (native replaceState updates address bar without updating useSearchParams). Preserve user click!
+    if (urlFindingId === previousUrlFindingIdRef.current) {
       return;
     }
+
+    // A genuine external navigation occurred with a changed URL finding parameter
+    previousUrlFindingIdRef.current = urlFindingId;
 
     // If this URL param already matches our current selected finding, do nothing
     if (lastSelectedIdRef.current === cleanParam || lastSelectedIdRef.current === decodedParam) {
-      return;
-    }
-
-    // If we already synced this exact external URL parameter, do nothing
-    if (lastSyncedUrlParamRef.current === cleanParam || lastSyncedUrlParamRef.current === decodedParam) {
       return;
     }
 

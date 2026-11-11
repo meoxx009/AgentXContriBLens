@@ -128,12 +128,14 @@ describe('PERMANENT FIX REGRESSION TEST: Finding Side-Panel Selection Synchroniz
     selectedFindingId: string | null = null;
     lastSelectedIdRef: string | null = null;
     lastSyncedUrlParamRef: string | null = null;
+    previousUrlFindingIdRef: string | null = null;
     hasInitializedSelectionRef = false;
     currentUrlQuery = new URLSearchParams();
 
     constructor(initialFindings: Finding[], initialUrlQuery = '') {
       this.findings = initialFindings;
       this.currentUrlQuery = new URLSearchParams(initialUrlQuery);
+      this.previousUrlFindingIdRef = this.currentUrlQuery.get('findingId') || this.currentUrlQuery.get('finding') || null;
     }
 
     // Corresponds to fetchFindings initialization
@@ -219,18 +221,18 @@ describe('PERMANENT FIX REGRESSION TEST: Finding Side-Panel Selection Synchroniz
     simulateExternalRouterSync(nextUrlFindingId: string | null) {
       if (!nextUrlFindingId || this.findings.length === 0) return;
 
-      // Guard: Stale searchParams must never overwrite a user's explicit selection
-      if (
-        this.lastSelectedIdRef &&
-        this.lastSelectedIdRef !== nextUrlFindingId
-      ) {
+      // If urlFindingId has not changed from what Next.js router provided on page load or previous navigation,
+      // then any divergence from lastSelectedIdRef is due to a local user click
+      // (native replaceState updates address bar without updating useSearchParams). Preserve user click!
+      if (nextUrlFindingId === this.previousUrlFindingIdRef) {
         return;
       }
 
-      // Guard: If this URL param already matches our current selected finding, do nothing
+      // A genuine external navigation occurred with a changed URL finding parameter
+      this.previousUrlFindingIdRef = nextUrlFindingId;
+
+      // If this URL param already matches our current selected finding, do nothing
       if (this.lastSelectedIdRef === nextUrlFindingId) return;
-      // Guard: If we already synced this exact external URL parameter, do nothing
-      if (this.lastSyncedUrlParamRef === nextUrlFindingId) return;
 
       this.lastSyncedUrlParamRef = nextUrlFindingId;
       const match = this.findings.find(
@@ -386,5 +388,22 @@ describe('PERMANENT FIX REGRESSION TEST: Finding Side-Panel Selection Synchroniz
     expect(returnedView.selectedFinding?.id).toBe(MOCK_HIGH_FINDING.id);
     expect(returnedView.selectedFinding?.title).toBe('Workflow declares write-all permissions');
     expect(returnedView.isRowSelected(MOCK_HIGH_FINDING)).toBe(true);
+  });
+
+  // Test 7: External deep link router navigation with a genuinely changed URL parameter cleanly updates selection to that finding
+  it('7. External deep link router navigation with a genuinely changed URL parameter cleanly updates selection to that finding', () => {
+    // Controller loaded initially with findingId=fnd_crit_aws_key
+    const controller = new FindingSelectionController(ALL_FINDINGS, 'findingId=fnd_crit_aws_key');
+    controller.initSelection();
+    expect(controller.selectedFinding?.id).toBe(MOCK_CRITICAL_FINDING.id);
+
+    // User is viewing critical finding, then clicks an external link to medium finding (or from Contributions)
+    // External router navigation fires with new parameter 'fnd_med_lodash_dep'
+    controller.simulateExternalRouterSync(MOCK_MEDIUM_FINDING.id);
+
+    // Selection cleanly transitions to the new deep-linked finding
+    expect(controller.selectedFinding?.id).toBe(MOCK_MEDIUM_FINDING.id);
+    expect(controller.selectedFinding?.title).toBe('Known Vulnerability in lodash@4.17.15');
+    expect(controller.isRowSelected(MOCK_MEDIUM_FINDING)).toBe(true);
   });
 });
