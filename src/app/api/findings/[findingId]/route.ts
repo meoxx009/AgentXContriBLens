@@ -21,12 +21,12 @@ export async function GET(
     if (auth.error) return auth.error;
     const user = auth.user;
 
-    const finding = db.getFindingById(findingId);
+    const finding = await db.getFindingById(findingId);
     if (!finding) {
       return apiError('Finding not found', 404, 'GITHUB_NOT_FOUND');
     }
 
-    const scan = db.getScanById(finding.scanId);
+    const scan = await db.getScanById(finding.scanId);
     if (!scan) {
       return apiError('Associated scan not found', 404, 'GITHUB_NOT_FOUND');
     }
@@ -86,12 +86,12 @@ export async function PATCH(
     if (auth.error) return auth.error;
     const user = auth.user;
 
-    const finding = db.getFindingById(findingId);
+    const finding = await db.getFindingById(findingId);
     if (!finding) {
       return apiError('Finding not found', 404, 'GITHUB_NOT_FOUND');
     }
 
-    const scan = db.getScanById(finding.scanId);
+    const scan = await db.getScanById(finding.scanId);
     if (!scan) {
       return apiError('Associated scan not found', 404, 'GITHUB_NOT_FOUND');
     }

@@ -8,11 +8,13 @@ import { ArrowLeft, Lock, Mail, ArrowRight, AlertCircle, CheckCircle2 } from "lu
 import { getSupabaseBrowserClient, isSupabaseConfigured } from "@/lib/supabase-browser";
 import { useFormValidation, LoginInputSchema, FormFieldError } from "@/lib/validation";
 import { getAuthRedirectFromParams } from "@/lib/auth-redirect";
+import { useApp } from "@/components/AppContext";
 
 type AuthState = "idle" | "focused" | "invalid" | "submitting" | "success" | "server-error";
 
 export default function LoginPage() {
   const router = useRouter();
+  const { setUser } = useApp();
   const [authState, setAuthState] = useState<AuthState>("idle");
   const [error, setError] = useState<string | null>(null);
 
@@ -71,12 +73,34 @@ export default function LoginPage() {
 
       setAuthState("success");
       const destination = getNextRedirect();
-      if (typeof window !== "undefined") {
-        window.location.href = destination;
-      } else {
-        router.push(destination);
-        router.refresh();
+
+      // Verify session cookie receipt via /api/auth/me before redirecting
+      let authedUser = data.user || null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const verifyRes = await fetch("/api/auth/me", {
+            credentials: "include",
+            cache: "no-store",
+          });
+          if (verifyRes.ok) {
+            const verifyData = await verifyRes.json();
+            if (verifyData.user) {
+              authedUser = verifyData.user;
+              break;
+            }
+          }
+        } catch {
+          // Retry
+        }
+        await new Promise((r) => setTimeout(r, 80));
       }
+
+      if (authedUser && setUser) {
+        setUser(authedUser);
+      }
+
+      router.replace(destination);
+      router.refresh();
     } catch {
       setAuthState("server-error");
       const refId = "ERR-" + Math.random().toString(36).substring(2, 8).toUpperCase();

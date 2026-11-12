@@ -186,9 +186,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, [loading, user, pathname]);
 
-  const refreshUser = async () => {
+  const refreshUser = async (isRetry = false): Promise<void> => {
     try {
-      const res = await fetch('/api/auth/me');
+      const res = await fetch('/api/auth/me', { credentials: 'include', cache: 'no-store' });
       if (res.ok) {
         const data = await res.json();
         setUser(data.user);
@@ -230,6 +230,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           }
         }
       } else {
+        const hasCookie = typeof document !== 'undefined' && document.cookie.includes('contriblens_session');
+        if (hasCookie && !isRetry) {
+          await new Promise((r) => setTimeout(r, 150));
+          return refreshUser(true);
+        }
+
         setUser(null);
         if (res.status === 401) {
           const protectedPrefixes = ['/app', '/dashboard', '/scan', '/findings', '/contributions', '/drafts', '/issue-drafts', '/profile'];

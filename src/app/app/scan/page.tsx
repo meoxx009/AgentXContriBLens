@@ -1,6 +1,6 @@
 'use client';
 
-import React, { Suspense, useEffect } from 'react';
+import React, { Suspense, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useApp } from '@/components/AppContext';
@@ -8,21 +8,31 @@ import ScanView from '@/components/views/ScanView';
 import { Search } from 'lucide-react';
 
 export default function AppScanPage() {
-  const { user, loading, openAuthModal } = useApp();
+  const { user, loading, openAuthModal, refreshUser } = useApp();
+  const [retryingAuth, setRetryingAuth] = useState(false);
   const router = useRouter();
 
   useEffect(() => {
     if (!loading && !user) {
-      openAuthModal({
-        initialMode: 'login',
-        title: 'Sign In to Scan',
-        subtitle: 'Please sign in to scan public repositories and save PR plans.',
-        onDismiss: () => router.push('/'),
-      });
-    }
-  }, [user, loading, router, openAuthModal]);
+      const hasSessionCookie = typeof document !== 'undefined' && document.cookie.includes('contriblens_session');
+      if (hasSessionCookie && !retryingAuth) {
+        setRetryingAuth(true);
+        refreshUser().finally(() => setRetryingAuth(false));
+        return;
+      }
 
-  if (loading) {
+      if (!retryingAuth) {
+        openAuthModal({
+          initialMode: 'login',
+          title: 'Sign In to Scan',
+          subtitle: 'Please sign in to scan public repositories and save PR plans.',
+          onDismiss: () => router.push('/'),
+        });
+      }
+    }
+  }, [user, loading, router, openAuthModal, refreshUser, retryingAuth]);
+
+  if (loading || retryingAuth) {
     return (
       <div className="max-w-6xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-16 text-center space-y-3">
         <div className="w-8 h-8 border-2 border-electricTangerine border-t-transparent rounded-full animate-spin mx-auto" />

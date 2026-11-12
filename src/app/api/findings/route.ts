@@ -27,16 +27,20 @@ export async function GET(req: Request) {
     let findings = db.getFindings(scanId);
 
     if (scanId) {
-      let scan = db.getScanById(scanId);
+      let scan = await db.getScanById(scanId);
       if (!scan) {
-        await db.hydrateFromSupabase(user.id);
-        scan = db.getScanById(scanId);
+        await db.hydrateFromSupabase(user.id, scanId);
+        scan = await db.getScanById(scanId);
       }
       if (!scan) {
         return apiError('Scan not found', 404, 'GITHUB_NOT_FOUND');
       }
       if (scan.userId && scan.userId !== user.id) {
         return apiError('Unauthorized access to scan', 403, 'AUTH_INVALID_CREDENTIALS');
+      }
+      if (findings.length === 0) {
+        await db.hydrateFromSupabase(user.id, scanId);
+        findings = db.getFindings(scanId);
       }
     } else {
       const scans = db.getScans(user.id);

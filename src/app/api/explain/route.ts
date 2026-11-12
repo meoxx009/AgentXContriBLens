@@ -31,12 +31,12 @@ export async function POST(req: Request) {
       );
     }
 
-    const finding = db.getFindingById(findingId);
+    const finding = await db.getFindingById(findingId);
     if (!finding) {
       return apiError('Finding not found', 404, 'GITHUB_NOT_FOUND');
     }
 
-    const scan = db.getScanById(finding.scanId);
+    const scan = await db.getScanById(finding.scanId);
     if (!scan) {
       return apiError('Scan not found', 404, 'GITHUB_NOT_FOUND');
     }

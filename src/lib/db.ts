@@ -228,6 +228,153 @@ function persistDb(): void {
   }
 }
 
+function isValidUuid(val?: string | null): boolean {
+  if (!val) return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+}
+
+function mapScanToSupabase(scan: ScanSummary) {
+  const repoName = scan.repoName || scan.name || 'repository';
+  const owner = scan.owner || (repoName.includes('/') ? repoName.split('/')[0] : 'anonymous');
+  return {
+    id: scan.id,
+    user_id: isValidUuid(scan.userId) ? scan.userId : null,
+    repo_name: repoName,
+    repo_url: scan.repoUrl || scan.repositoryUrl || `https://github.com/${repoName}`,
+    owner,
+    ref: scan.branch || scan.ref || 'main',
+    status: scan.status || 'completed',
+    technologies: scan.technologies || {},
+    tech_stack: scan.techStack || {},
+    health: {
+      score: scan.readinessScore ?? 100,
+      summary: scan.findingsCount || { total: 0, critical: 0, high: 0, medium: 0, low: 0, info: 0 },
+      health: scan.health || {},
+    },
+    total_files: scan.totalFiles || scan.filesScanned || 0,
+    total_bytes: scan.totalBytes || scan.bytesScanned || 0,
+    raw_json: scan,
+    created_at: scan.scannedAt || scan.createdAt || new Date().toISOString(),
+  };
+}
+
+function mapSupabaseToScan(s: Record<string, unknown>): ScanSummary {
+  const raw = (s.raw_json && typeof s.raw_json === 'object') ? (s.raw_json as Partial<ScanSummary>) : {};
+  const repoName = (s.repo_name as string) || raw.repoName || 'repository';
+  const owner = (s.owner as string) || raw.owner || (repoName.includes('/') ? repoName.split('/')[0] : 'anonymous');
+  const healthObj = (s.health && typeof s.health === 'object') ? (s.health as Record<string, unknown>) : {};
+
+  return {
+    ...raw,
+    id: (s.id as string) || raw.id || '',
+    userId: (s.user_id as string) || raw.userId,
+    repoUrl: (s.repo_url as string) || raw.repoUrl || `https://github.com/${repoName}`,
+    repoName,
+    owner,
+    branch: (s.ref as string) || raw.branch || 'main',
+    ref: (s.ref as string) || raw.ref || 'main',
+    status: ((s.status as string) || raw.status || 'completed') as ScanSummary['status'],
+    totalFiles: typeof s.total_files === 'number' ? s.total_files : (raw.totalFiles || 0),
+    totalBytes: typeof s.total_bytes === 'number' ? s.total_bytes : (raw.totalBytes || 0),
+    readinessScore: typeof healthObj.score === 'number' ? healthObj.score : (raw.readinessScore ?? 100),
+    findingsCount: (healthObj.summary as ScanSummary['findingsCount']) || raw.findingsCount || {
+      total: 0,
+      critical: 0,
+      high: 0,
+      medium: 0,
+      low: 0,
+      info: 0,
+    },
+    techStack: (s.tech_stack as ScanSummary['techStack']) || raw.techStack || {
+      languages: [],
+      packageManagers: [],
+      frameworks: [],
+      ciWorkflows: [],
+      containerization: [],
+      manifestFiles: [],
+    },
+    technologies: (s.technologies as ScanSummary['technologies']) || raw.technologies,
+    scannedAt: (s.created_at as string) || raw.scannedAt || new Date().toISOString(),
+  };
+}
+
+function mapFindingToSupabase(finding: Finding) {
+  const sanitizedFinding: Finding = {
+    ...finding,
+    title: finding.title ? redactSecrets(finding.title) : finding.title,
+    evidence: finding.evidence ? redactSecrets(finding.evidence) : finding.evidence,
+    impact: finding.impact ? redactSecrets(finding.impact) : finding.impact,
+    fixHint: finding.fixHint ? redactSecrets(finding.fixHint) : finding.fixHint,
+  };
+
+  return {
+    id: sanitizedFinding.id,
+    scan_id: sanitizedFinding.scanId,
+    rule_id: sanitizedFinding.ruleId || 'GENERIC',
+    title: sanitizedFinding.title || '',
+    severity: (sanitizedFinding.severity || 'low').toLowerCase(),
+    category: (sanitizedFinding.category || 'general').toLowerCase(),
+    confidence: typeof sanitizedFinding.confidence === 'number' ? sanitizedFinding.confidence : 0.85,
+    source_tool: sanitizedFinding.sourceTool || 'scanner',
+    file: sanitizedFinding.file || null,
+    line_start: sanitizedFinding.lineStart || null,
+    line_end: sanitizedFinding.lineEnd || null,
+    evidence: sanitizedFinding.evidence || '',
+    evidence_hash: sanitizedFinding.evidenceHash || '',
+    impact: sanitizedFinding.impact || '',
+    fix_hint: sanitizedFinding.fixHint || '',
+    skills: sanitizedFinding.skills || [],
+    learning_resources: sanitizedFinding.learningResources || [],
+    disclosure_mode: sanitizedFinding.disclosureMode || 'maintainer-review',
+    redacted: sanitizedFinding.redacted ?? true,
+    fingerprint: sanitizedFinding.fingerprint || null,
+    readiness: sanitizedFinding.readiness || {},
+    explanation_modes: sanitizedFinding.explanationModes || {},
+    reviewed: sanitizedFinding.reviewed ?? false,
+    reviewed_by: sanitizedFinding.reviewedBy || null,
+    reviewed_at: sanitizedFinding.reviewedAt || null,
+    diff_status: sanitizedFinding.diffStatus || 'new',
+    raw_json: sanitizedFinding,
+    created_at: sanitizedFinding.createdAt || new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+}
+
+function mapSupabaseToFinding(row: Record<string, unknown>): Finding {
+  const raw = (row.raw_json && typeof row.raw_json === 'object') ? (row.raw_json as Partial<Finding>) : {};
+  const finding: Finding = {
+    ...raw,
+    id: (row.id as string) || raw.id || '',
+    scanId: (row.scan_id as string) || raw.scanId || '',
+    ruleId: (row.rule_id as string) || raw.ruleId || 'GENERIC',
+    title: redactSecrets((row.title as string) || raw.title || ''),
+    severity: ((row.severity as string)?.toLowerCase() || raw.severity || 'low') as Finding['severity'],
+    category: ((row.category as string)?.toLowerCase() || raw.category || 'general') as Finding['category'],
+    confidence: (typeof row.confidence === 'number' ? row.confidence : (raw.confidence ?? 0.85)) as Finding['confidence'],
+    sourceTool: (row.source_tool as string) || raw.sourceTool || 'scanner',
+    file: (row.file as string) || raw.file || null,
+    lineStart: (typeof row.line_start === 'number' ? row.line_start : raw.lineStart) || null,
+    lineEnd: (typeof row.line_end === 'number' ? row.line_end : raw.lineEnd) || null,
+    evidence: redactSecrets((row.evidence as string) || raw.evidence || ''),
+    evidenceHash: (row.evidence_hash as string) || raw.evidenceHash || '',
+    impact: redactSecrets((row.impact as string) || raw.impact || ''),
+    fixHint: redactSecrets((row.fix_hint as string) || raw.fixHint || ''),
+    skills: (row.skills as string[]) || raw.skills || [],
+    learningResources: (row.learning_resources as Finding['learningResources']) || raw.learningResources || [],
+    disclosureMode: ((row.disclosure_mode as string) || raw.disclosureMode || 'maintainer-review') as Finding['disclosureMode'],
+    redacted: typeof row.redacted === 'boolean' ? row.redacted : (raw.redacted ?? true),
+    fingerprint: (row.fingerprint as string) || raw.fingerprint || '',
+    readiness: (row.readiness as Finding['readiness']) || raw.readiness,
+    explanationModes: (row.explanation_modes as Finding['explanationModes']) || raw.explanationModes,
+    reviewed: typeof row.reviewed === 'boolean' ? row.reviewed : (raw.reviewed ?? false),
+    reviewedBy: (row.reviewed_by as string) || raw.reviewedBy,
+    reviewedAt: (row.reviewed_at as string) || raw.reviewedAt,
+    diffStatus: ((row.diff_status as string) || raw.diffStatus || 'new') as Finding['diffStatus'],
+    createdAt: (row.created_at as string) || raw.createdAt || new Date().toISOString(),
+  };
+  return finding;
+}
+
 export const db = {
   // Users
   getUsers: (): User[] => {
@@ -289,48 +436,88 @@ export const db = {
     return scans;
   },
   getScanById: (id: string): ScanSummary | undefined => {
-    return ensureDb().scans.find((s) => s.id === id);
+    if (!id) return undefined;
+    const cleanId = id.trim();
+    const local = ensureDb().scans.find((s) => s.id === cleanId);
+    if (local) {
+      return local;
+    }
+
+    if (!isSupabaseConfigured()) {
+      return undefined;
+    }
+
+    const fetcher = async (): Promise<ScanSummary | undefined> => {
+      try {
+        const client = getSupabaseServerClient();
+        if (!client) return undefined;
+        const { data, error } = await client
+          .from('scans')
+          .select('*')
+          .eq('id', cleanId)
+          .maybeSingle();
+
+        if (!error && data) {
+          const scan = mapSupabaseToScan(data);
+          const dbData = ensureDb();
+          const idx = dbData.scans.findIndex((s) => s.id === scan.id);
+          if (idx >= 0) {
+            dbData.scans[idx] = scan;
+          } else {
+            dbData.scans.unshift(scan);
+          }
+          persistDb();
+          return scan;
+        }
+      } catch (err) {
+        console.warn('Supabase fetch scan error:', err);
+      }
+      return undefined;
+    };
+
+    return fetcher() as unknown as ScanSummary;
   },
-  hydrateFromSupabase: async (userId?: string): Promise<void> => {
-    if (!isSupabaseConfigured() || !userId) return;
+  hydrateFromSupabase: async (userId?: string, scanId?: string): Promise<void> => {
+    if (!isSupabaseConfigured()) return;
     try {
       const client = getSupabaseServerClient();
       if (!client) return;
-      const { data: scansData, error } = await client.from('scans').select('*').eq('user_id', userId);
-      if (!error && scansData && scansData.length > 0) {
+
+      // 1. Scans
+      let scansQuery = client.from('scans').select('*');
+      if (userId && isValidUuid(userId)) {
+        scansQuery = scansQuery.eq('user_id', userId);
+      } else if (scanId) {
+        scansQuery = scansQuery.eq('id', scanId);
+      }
+      const { data: scansData, error: scanErr } = await scansQuery;
+      if (!scanErr && scansData && scansData.length > 0) {
         const data = ensureDb();
         for (const s of scansData) {
           if (!data.scans.some((x) => x.id === s.id)) {
-            const repoName = s.repo_name || s.repoName || 'repository';
-            const owner = s.owner || (repoName.includes('/') ? repoName.split('/')[0] : 'anonymous');
-            data.scans.push({
-              id: s.id,
-              userId: s.user_id,
-              repoUrl: s.repo_url || `https://github.com/${repoName}`,
-              repoName,
-              owner,
-              branch: s.ref || 'main',
-              ref: s.ref || 'main',
-              status: s.status || 'completed',
-              totalFiles: s.total_files || 0,
-              totalBytes: s.total_bytes || 0,
-              findingsCount: s.health?.summary || { total: 0, critical: 0, high: 0, medium: 0, low: 0, info: 0 },
-              readinessScore: s.health?.score ?? 100,
-              techStack: s.tech_stack || {
-                languages: [],
-                packageManagers: [],
-                frameworks: [],
-                ciWorkflows: [],
-                containerization: [],
-                manifestFiles: [],
-              },
-              scannedAt: s.created_at || new Date().toISOString(),
-              technologies: s.technologies,
-            });
+            data.scans.push(mapSupabaseToScan(s));
           }
         }
-        persistDb();
       }
+
+      // 2. Findings
+      let findingsQuery = client.from('findings').select('*');
+      if (scanId) {
+        findingsQuery = findingsQuery.eq('scan_id', scanId);
+      } else if (userId && isValidUuid(userId)) {
+        findingsQuery = findingsQuery.eq('user_id', userId);
+      }
+      const { data: findingsData, error: findErr } = await findingsQuery;
+      if (!findErr && findingsData && findingsData.length > 0) {
+        const data = ensureDb();
+        for (const f of findingsData) {
+          if (!data.findings.some((x) => x.id === f.id)) {
+            data.findings.push(mapSupabaseToFinding(f));
+          }
+        }
+      }
+
+      persistDb();
     } catch {
       // Fall through silently if Supabase is unavailable
     }
@@ -350,17 +537,9 @@ export const db = {
       try {
         const client = getSupabaseServerClient();
         if (client) {
+          const payload = mapScanToSupabase(scan);
           Promise.resolve(
-            client.from('scans').upsert({
-              id: scan.id,
-              user_id: scan.userId,
-              repo_name: scan.repoName,
-              ref: scan.branch || scan.ref,
-              status: scan.status,
-              technologies: scan.technologies || scan.techStack,
-              health: { score: scan.readinessScore, summary: scan.findingsCount },
-              created_at: scan.scannedAt || new Date().toISOString(),
-            })
+            client.from('scans').upsert(payload, { onConflict: 'id' })
           ).catch((err) => {
             console.warn('Supabase scan upsert background warning:', err);
           });
@@ -385,6 +564,23 @@ export const db = {
     data.drafts = data.drafts.filter((d) => d.scanId !== scanId);
     data.technologies = (data.technologies || []).filter((t) => t.scanId !== scanId);
     persistDb();
+
+    if (isSupabaseConfigured()) {
+      try {
+        const client = getSupabaseServerClient();
+        if (client) {
+          Promise.resolve(client.from('findings').delete().eq('scan_id', scanId)).catch((err) => {
+            console.debug('Supabase client delete findings warning:', err);
+          });
+          Promise.resolve(client.from('scans').delete().eq('id', scanId)).catch((err) => {
+            console.debug('Supabase client delete scan warning:', err);
+          });
+        }
+      } catch (err) {
+        console.debug('Supabase client delete error:', err);
+      }
+    }
+
     return true;
   },
 
@@ -394,17 +590,63 @@ export const db = {
     if (scanId) return findings.filter((f) => f.scanId === scanId);
     return findings;
   },
+  getFindingsByScanId: async (scanId: string): Promise<Finding[]> => {
+    let findings = ensureDb().findings.filter((f) => f.scanId === scanId);
+    if (findings.length === 0 && isSupabaseConfigured()) {
+      await db.hydrateFromSupabase(undefined, scanId);
+      findings = ensureDb().findings.filter((f) => f.scanId === scanId);
+    }
+    return findings;
+  },
   getFindingById: (id: string): Finding | undefined => {
     if (!id) return undefined;
     const cleanId = id.trim();
     const decoded = decodeURIComponent(cleanId);
-    return ensureDb().findings.find(
+    const local = ensureDb().findings.find(
       (f) =>
         f.id === cleanId ||
         f.id === decoded ||
         (f.id && decodeURIComponent(f.id) === decoded) ||
         (f.fingerprint && (f.fingerprint === cleanId || f.fingerprint === decoded))
     );
+
+    if (local) {
+      return local;
+    }
+
+    if (!isSupabaseConfigured()) {
+      return undefined;
+    }
+
+    const fetcher = async (): Promise<Finding | undefined> => {
+      try {
+        const client = getSupabaseServerClient();
+        if (!client) return undefined;
+        const { data, error } = await client
+          .from('findings')
+          .select('*')
+          .or(`id.eq.${cleanId},fingerprint.eq.${cleanId}`)
+          .maybeSingle();
+
+        if (!error && data) {
+          const finding = mapSupabaseToFinding(data);
+          const dbData = ensureDb();
+          const idx = dbData.findings.findIndex((f) => f.id === finding.id);
+          if (idx >= 0) {
+            dbData.findings[idx] = finding;
+          } else {
+            dbData.findings.push(finding);
+          }
+          persistDb();
+          return finding;
+        }
+      } catch (err) {
+        console.warn('Supabase fetch finding error:', err);
+      }
+      return undefined;
+    };
+
+    return fetcher() as unknown as Finding;
   },
   saveFindings: (newFindings: Finding[]): Finding[] => {
     const data = ensureDb();
@@ -423,6 +665,24 @@ export const db = {
       }
     }
     persistDb();
+
+    // Background sync to Supabase when configured
+    if (isSupabaseConfigured() && newFindings.length > 0) {
+      try {
+        const client = getSupabaseServerClient();
+        if (client) {
+          const payload = newFindings.map((f) => mapFindingToSupabase(f));
+          Promise.resolve(
+            client.from('findings').upsert(payload, { onConflict: 'id' })
+          ).catch((err) => {
+            console.warn('Supabase findings upsert background warning:', err);
+          });
+        }
+      } catch (err) {
+        console.warn('Supabase client findings sync warning:', err);
+      }
+    }
+
     return newFindings;
   },
   updateFinding: (finding: Finding): Finding => {
@@ -432,6 +692,23 @@ export const db = {
       data.findings[idx] = finding;
       persistDb();
     }
+
+    if (isSupabaseConfigured()) {
+      try {
+        const client = getSupabaseServerClient();
+        if (client) {
+          const payload = mapFindingToSupabase(finding);
+          Promise.resolve(
+            client.from('findings').upsert(payload, { onConflict: 'id' })
+          ).catch((err) => {
+            console.warn('Supabase updateFinding background warning:', err);
+          });
+        }
+      } catch (err) {
+        console.warn('Supabase client updateFinding warning:', err);
+      }
+    }
+
     return finding;
   },
   markFindingReviewed: (findingId: string, userId: string): Finding | undefined => {
@@ -442,6 +719,23 @@ export const db = {
       finding.reviewedBy = userId;
       finding.reviewedAt = new Date().toISOString();
       persistDb();
+
+      if (isSupabaseConfigured()) {
+        try {
+          const client = getSupabaseServerClient();
+          if (client) {
+            const payload = mapFindingToSupabase(finding);
+            Promise.resolve(
+              client.from('findings').upsert(payload, { onConflict: 'id' })
+            ).catch((err) => {
+              console.warn('Supabase markFindingReviewed background warning:', err);
+            });
+          }
+        } catch (err) {
+          console.warn('Supabase client markFindingReviewed warning:', err);
+        }
+      }
+
       return finding;
     }
     return undefined;
