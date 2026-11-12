@@ -13,6 +13,7 @@ import type {
   StorageTier,
 } from '../types';
 import { redactSecrets } from './redaction.ts';
+import { computeFindingFingerprint } from './scanner/diff';
 import { getSupabaseServerClient, isSupabaseConfigured } from './supabase';
 
 export class PersistenceError extends Error {
@@ -62,15 +63,18 @@ let cache: DatabaseSchema | null = null;
 let lastMtime = 0;
 
 function ensureDb(): DatabaseSchema {
+  // Fast in-memory read: completely bypass filesystem when cache is populated
+  if (cache) {
+    return cache;
+  }
+
   try {
     if (!fs.existsSync(DATA_DIR)) {
       fs.mkdirSync(DATA_DIR, { recursive: true });
     }
 
     if (!fs.existsSync(DB_FILE)) {
-      if (!cache) {
-        cache = getInitialData();
-      }
+      cache = getInitialData();
       try {
         fs.writeFileSync(DB_FILE, JSON.stringify(cache, null, 2), 'utf-8');
         lastMtime = fs.statSync(DB_FILE).mtimeMs;
@@ -84,7 +88,6 @@ function ensureDb(): DatabaseSchema {
     try {
       stat = fs.statSync(DB_FILE);
     } catch {
-      if (cache) return cache;
       cache = getInitialData();
       return cache;
     }
@@ -168,64 +171,58 @@ function ensureDb(): DatabaseSchema {
   }
 }
 
+let isPersisting = false;
+let pendingPersist = false;
+
 function persistDb(): void {
   if (!cache) return;
-  try {
-    if (!fs.existsSync(DATA_DIR)) {
-      fs.mkdirSync(DATA_DIR, { recursive: true });
-    }
-    const serialized = JSON.stringify(cache, null, 2);
-    const randomSuffix = Math.random().toString(36).substring(2, 9);
-    const tmpFile = `${DB_FILE}.${process.pid}.${Date.now()}.${randomSuffix}.tmp`;
-
-    try {
-      fs.writeFileSync(tmpFile, serialized, 'utf-8');
-    } catch {
-      // Fallback: direct write if temp write fails
-      fs.writeFileSync(DB_FILE, serialized, 'utf-8');
-      lastMtime = Date.now();
-      return;
-    }
-
-    let renamed = false;
-    for (let retry = 0; retry < 5; retry++) {
-      try {
-        fs.renameSync(tmpFile, DB_FILE);
-        renamed = true;
-        break;
-      } catch (renameErr) {
-        if (retry === 4) {
-          // Direct overwrite fallback
-          try {
-            fs.writeFileSync(DB_FILE, serialized, 'utf-8');
-            try {
-              fs.unlinkSync(tmpFile);
-            } catch (unlinkErr) {
-              console.debug('Temp file unlink suppressed:', unlinkErr);
-            }
-            renamed = true;
-          } catch (writeErr) {
-            console.error('Failed fallback write to db file:', writeErr);
-          }
-          break;
-        }
-        // Brief sync pause before retry
-        const start = Date.now();
-        while (Date.now() - start < 5 * (retry + 1)) {}
-      }
-    }
-
-    try {
-      if (fs.existsSync(DB_FILE)) {
-        lastMtime = fs.statSync(DB_FILE).mtimeMs;
-      }
-    } catch {
-      lastMtime = Date.now();
-    }
-  } catch (error: any) {
-    // Keep in-memory cache valid — avoid crashing active serverless requests with false DB failures
-    console.warn('Notice: Disk persistence encountered contention, keeping verified in-memory state:', error?.message);
+  if (isPersisting) {
+    pendingPersist = true;
+    return;
   }
+  isPersisting = true;
+  pendingPersist = false;
+
+  const scheduleFn = typeof setImmediate === 'function' ? setImmediate : (fn: () => void) => setTimeout(fn, 0);
+
+  scheduleFn(async () => {
+    try {
+      if (!cache) return;
+      if (!fs.existsSync(DATA_DIR)) {
+        await fs.promises.mkdir(DATA_DIR, { recursive: true });
+      }
+      const serialized = JSON.stringify(cache, null, 2);
+      const randomSuffix = Math.random().toString(36).substring(2, 9);
+      const tmpFile = `${DB_FILE}.${process.pid}.${Date.now()}.${randomSuffix}.tmp`;
+
+      try {
+        await fs.promises.writeFile(tmpFile, serialized, 'utf-8');
+        await fs.promises.rename(tmpFile, DB_FILE);
+      } catch (writeTmpErr) {
+        // Direct overwrite fallback without busy-waiting
+        try {
+          await fs.promises.writeFile(DB_FILE, serialized, 'utf-8');
+          if (fs.existsSync(tmpFile)) {
+            await fs.promises.unlink(tmpFile).catch((unlinkErr) => {
+              console.debug('Temp file unlink suppressed:', unlinkErr);
+            });
+          }
+        } catch (writeErr) {
+          console.debug('Notice: Direct disk write fallback warning:', writeErr, writeTmpErr);
+        }
+      }
+
+      lastMtime = Date.now();
+    } catch (error: unknown) {
+      // Keep in-memory cache valid — avoid crashing active serverless requests with false DB failures
+      console.debug('Notice: Disk persistence encountered contention, keeping verified in-memory state:', error);
+    } finally {
+      isPersisting = false;
+      if (pendingPersist) {
+        persistDb();
+      }
+    }
+  });
 }
 
 function isValidUuid(val?: string | null): boolean {
@@ -375,6 +372,180 @@ function mapSupabaseToFinding(row: Record<string, unknown>): Finding {
   return finding;
 }
 
+function mapRouteToSupabase(route: ContributionRoute) {
+  const sanitizedRoute: ContributionRoute = {
+    ...route,
+    title: route.title ? redactSecrets(route.title) : route.title,
+    suggestedChange: route.suggestedChange ? redactSecrets(route.suggestedChange) : route.suggestedChange,
+    testPlan: Array.isArray(route.testPlan)
+      ? route.testPlan.map((s: string) => redactSecrets(s))
+      : [],
+  };
+
+  const raw = route as unknown as Record<string, unknown>;
+  const userId = typeof raw.userId === 'string' ? raw.userId : undefined;
+
+  return {
+    id: sanitizedRoute.id,
+    scan_id: sanitizedRoute.scanId,
+    user_id: isValidUuid(userId) ? userId : null,
+    finding_id: sanitizedRoute.findingId || (sanitizedRoute.findingIds && sanitizedRoute.findingIds.length > 0 ? sanitizedRoute.findingIds[0] : null),
+    title: sanitizedRoute.title || '',
+    status: sanitizedRoute.status || 'not-started',
+    raw_json: sanitizedRoute,
+    created_at: sanitizedRoute.createdAt || new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+}
+
+function mapSupabaseToRoute(row: Record<string, unknown>): ContributionRoute {
+  const raw = (row.raw_json && typeof row.raw_json === 'object') ? (row.raw_json as Partial<ContributionRoute>) : {};
+  const testPlan = Array.isArray(raw.testPlan)
+    ? raw.testPlan.map((s: string) => redactSecrets(s))
+    : typeof raw.testPlan === 'string'
+    ? [redactSecrets(raw.testPlan)]
+    : [];
+
+  return {
+    ...raw,
+    id: (row.id as string) || raw.id || '',
+    scanId: (row.scan_id as string) || raw.scanId || '',
+    findingIds: Array.isArray(raw.findingIds) ? raw.findingIds : (row.finding_id ? [row.finding_id as string] : []),
+    findingId: (row.finding_id as string) || raw.findingId,
+    title: redactSecrets((row.title as string) || raw.title || ''),
+    summary: redactSecrets(raw.summary || ''),
+    status: ((row.status as string) || raw.status || 'not-started') as ContributionRoute['status'],
+    suggestedChange: redactSecrets(raw.suggestedChange || ''),
+    testPlan,
+    acceptanceCriteria: Array.isArray(raw.acceptanceCriteria) ? raw.acceptanceCriteria : [],
+    skills: Array.isArray(raw.skills) ? raw.skills : [],
+    files: Array.isArray(raw.files) ? raw.files : [],
+    estimatedMinutes: typeof raw.estimatedMinutes === 'number' ? raw.estimatedMinutes : 15,
+    difficulty: raw.difficulty || 'beginner',
+    readiness: raw.readiness || { total: 0 },
+    createdAt: (row.created_at as string) || raw.createdAt || new Date().toISOString(),
+  };
+}
+
+function mapDraftToSupabase(draft: IssueDraft) {
+  const sanitizedDraft: IssueDraft = {
+    ...draft,
+    title: draft.title ? redactSecrets(draft.title) : draft.title,
+    body: draft.body ? redactSecrets(draft.body) : draft.body,
+    markdownContent: draft.markdownContent ? redactSecrets(draft.markdownContent) : draft.markdownContent,
+  };
+
+  return {
+    id: sanitizedDraft.id,
+    scan_id: sanitizedDraft.scanId,
+    user_id: isValidUuid(sanitizedDraft.userId) ? sanitizedDraft.userId : null,
+    finding_id: sanitizedDraft.findingId || null,
+    route_id: sanitizedDraft.routeId || null,
+    title: sanitizedDraft.title || '',
+    body: sanitizedDraft.body || '',
+    markdown_content: sanitizedDraft.markdownContent || sanitizedDraft.body || '',
+    status: sanitizedDraft.status || 'draft',
+    raw_json: sanitizedDraft,
+    created_at: sanitizedDraft.createdAt || new Date().toISOString(),
+    updated_at: sanitizedDraft.updatedAt || new Date().toISOString(),
+  };
+}
+
+function mapSupabaseToDraft(row: Record<string, unknown>): IssueDraft {
+  const raw = (row.raw_json && typeof row.raw_json === 'object') ? (row.raw_json as Partial<IssueDraft>) : {};
+  return {
+    ...raw,
+    id: (row.id as string) || raw.id || '',
+    scanId: (row.scan_id as string) || raw.scanId || '',
+    repoName: (row.repo_name as string) || raw.repoName || 'repository',
+    userId: (row.user_id as string) || raw.userId,
+    findingId: (row.finding_id as string) || raw.findingId,
+    routeId: (row.route_id as string) || raw.routeId,
+    title: redactSecrets((row.title as string) || raw.title || ''),
+    body: redactSecrets((row.body as string) || raw.body || ''),
+    markdownContent: redactSecrets((row.markdown_content as string) || raw.markdownContent || raw.body || ''),
+    status: ((row.status as string) || raw.status || 'draft') as IssueDraft['status'],
+    generatedBy: (raw.generatedBy as IssueDraft['generatedBy']) || 'deterministic',
+    createdAt: (row.created_at as string) || raw.createdAt || new Date().toISOString(),
+    updatedAt: (row.updated_at as string) || raw.updatedAt || new Date().toISOString(),
+  };
+}
+
+function mapTechnologyToSupabase(tech: TechnologyRecord) {
+  return {
+    id: tech.id,
+    scan_id: tech.scanId,
+    name: tech.name,
+    category: tech.category || 'general',
+    version: tech.version || null,
+    confidence: tech.confidence ?? 1.0,
+    source_file: tech.sourceFile || null,
+    raw_json: tech,
+    created_at: tech.createdAt || new Date().toISOString(),
+  };
+}
+
+function mapSupabaseToTechnology(row: Record<string, unknown>): TechnologyRecord {
+  const raw = (row.raw_json && typeof row.raw_json === 'object') ? (row.raw_json as Partial<TechnologyRecord>) : {};
+  return {
+    ...raw,
+    id: (row.id as string) || raw.id || '',
+    scanId: (row.scan_id as string) || raw.scanId || '',
+    name: (row.name as string) || raw.name || '',
+    category: (row.category as string) || raw.category || 'general',
+    version: (row.version as string) || raw.version,
+    confidence: typeof row.confidence === 'number' ? row.confidence : (raw.confidence ?? 1.0),
+    sourceFile: (row.source_file as string) || raw.sourceFile,
+    createdAt: (row.created_at as string) || raw.createdAt || new Date().toISOString(),
+  };
+}
+
+function mapActivityToSupabase(event: ActivityEvent) {
+  const sanitizedEvent: ActivityEvent = {
+    ...event,
+    description: redactSecrets(event.description || ''),
+  };
+
+  return {
+    id: sanitizedEvent.id,
+    user_id: isValidUuid(sanitizedEvent.userId) ? sanitizedEvent.userId : null,
+    type: sanitizedEvent.type,
+    repo_name: sanitizedEvent.repoName || '',
+    description: sanitizedEvent.description || '',
+    raw_json: sanitizedEvent,
+    timestamp: sanitizedEvent.timestamp || new Date().toISOString(),
+    created_at: sanitizedEvent.timestamp || new Date().toISOString(),
+  };
+}
+
+function mapSupabaseToActivity(row: Record<string, unknown>): ActivityEvent {
+  const raw = (row.raw_json && typeof row.raw_json === 'object') ? (row.raw_json as Partial<ActivityEvent>) : {};
+  const validTypes: ActivityEvent['type'][] = [
+    'scan',
+    'finding_explained',
+    'route_created',
+    'draft_generated',
+    'route_completed',
+    'route_updated',
+    'draft_reviewed',
+    'finding_reviewed',
+  ];
+  const candidateType = (row.type as string) || raw.type || 'scan';
+  const type: ActivityEvent['type'] = validTypes.includes(candidateType as ActivityEvent['type'])
+    ? (candidateType as ActivityEvent['type'])
+    : 'scan';
+
+  return {
+    ...raw,
+    id: (row.id as string) || raw.id || '',
+    userId: (row.user_id as string) || raw.userId || 'anonymous',
+    type,
+    repoName: (row.repo_name as string) || raw.repoName || '',
+    description: redactSecrets((row.description as string) || raw.description || ''),
+    timestamp: (row.timestamp as string) || (row.created_at as string) || raw.timestamp || new Date().toISOString(),
+  };
+}
+
 export const db = {
   // Users
   getUsers: (): User[] => {
@@ -438,7 +609,14 @@ export const db = {
   getScanById: (id: string): ScanSummary | undefined => {
     if (!id) return undefined;
     const cleanId = id.trim();
-    const local = ensureDb().scans.find((s) => s.id === cleanId);
+    let decoded = cleanId;
+    try {
+      decoded = decodeURIComponent(cleanId);
+    } catch (e) {
+      decoded = cleanId;
+    }
+    const candidateIds = Array.from(new Set([cleanId, decoded].filter(Boolean)));
+    const local = ensureDb().scans.find((s) => candidateIds.includes(s.id));
     if (local) {
       return local;
     }
@@ -454,7 +632,8 @@ export const db = {
         const { data, error } = await client
           .from('scans')
           .select('*')
-          .eq('id', cleanId)
+          .in('id', candidateIds)
+          .limit(1)
           .maybeSingle();
 
         if (!error && data) {
@@ -517,9 +696,74 @@ export const db = {
         }
       }
 
+      // 3. Routes
+      let routesQuery = client.from('routes').select('*');
+      if (scanId) {
+        routesQuery = routesQuery.eq('scan_id', scanId);
+      } else if (userId && isValidUuid(userId)) {
+        routesQuery = routesQuery.eq('user_id', userId);
+      }
+      const { data: routesData, error: routeErr } = await routesQuery;
+      if (!routeErr && routesData && routesData.length > 0) {
+        const data = ensureDb();
+        for (const r of routesData) {
+          if (!data.routes.some((x) => x.id === r.id)) {
+            data.routes.push(mapSupabaseToRoute(r));
+          }
+        }
+      }
+
+      // 4. Issue Drafts
+      let draftsQuery = client.from('issue_drafts').select('*');
+      if (scanId) {
+        draftsQuery = draftsQuery.eq('scan_id', scanId);
+      } else if (userId && isValidUuid(userId)) {
+        draftsQuery = draftsQuery.eq('user_id', userId);
+      }
+      const { data: draftsData, error: draftErr } = await draftsQuery;
+      if (!draftErr && draftsData && draftsData.length > 0) {
+        const data = ensureDb();
+        for (const d of draftsData) {
+          if (!data.drafts.some((x) => x.id === d.id)) {
+            data.drafts.push(mapSupabaseToDraft(d));
+          }
+        }
+      }
+
+      // 5. Technologies
+      if (scanId) {
+        const { data: techData, error: techErr } = await client.from('technologies').select('*').eq('scan_id', scanId);
+        if (!techErr && techData && techData.length > 0) {
+          const data = ensureDb();
+          for (const t of techData) {
+            if (!data.technologies.some((x) => x.id === t.id)) {
+              data.technologies.push(mapSupabaseToTechnology(t));
+            }
+          }
+        }
+      }
+
+      // 6. Activities
+      if (userId && isValidUuid(userId)) {
+        const { data: actData, error: actErr } = await client
+          .from('activities')
+          .select('*')
+          .eq('user_id', userId)
+          .order('timestamp', { ascending: false })
+          .limit(50);
+        if (!actErr && actData && actData.length > 0) {
+          const data = ensureDb();
+          for (const a of actData) {
+            if (!data.activities.some((x) => x.id === a.id)) {
+              data.activities.push(mapSupabaseToActivity(a));
+            }
+          }
+        }
+      }
+
       persistDb();
-    } catch {
-      // Fall through silently if Supabase is unavailable
+    } catch (err) {
+      console.debug('Notice: Supabase hydration fallback to local cache:', err);
     }
   },
   saveScan: (scan: ScanSummary): ScanSummary => {
@@ -572,6 +816,15 @@ export const db = {
           Promise.resolve(client.from('findings').delete().eq('scan_id', scanId)).catch((err) => {
             console.debug('Supabase client delete findings warning:', err);
           });
+          Promise.resolve(client.from('routes').delete().eq('scan_id', scanId)).catch((err) => {
+            console.debug('Supabase client delete routes warning:', err);
+          });
+          Promise.resolve(client.from('issue_drafts').delete().eq('scan_id', scanId)).catch((err) => {
+            console.debug('Supabase client delete drafts warning:', err);
+          });
+          Promise.resolve(client.from('technologies').delete().eq('scan_id', scanId)).catch((err) => {
+            console.debug('Supabase client delete technologies warning:', err);
+          });
           Promise.resolve(client.from('scans').delete().eq('id', scanId)).catch((err) => {
             console.debug('Supabase client delete scan warning:', err);
           });
@@ -586,28 +839,33 @@ export const db = {
 
   // Findings
   getFindings: (scanId?: string): Finding[] => {
-    const findings = ensureDb().findings;
+    const findings = ensureDb().findings.filter((f) => !f.id.startsWith('mem-'));
     if (scanId) return findings.filter((f) => f.scanId === scanId);
     return findings;
   },
   getFindingsByScanId: async (scanId: string): Promise<Finding[]> => {
-    let findings = ensureDb().findings.filter((f) => f.scanId === scanId);
+    let findings = ensureDb().findings.filter((f) => !f.id.startsWith('mem-') && f.scanId === scanId);
     if (findings.length === 0 && isSupabaseConfigured()) {
       await db.hydrateFromSupabase(undefined, scanId);
-      findings = ensureDb().findings.filter((f) => f.scanId === scanId);
+      findings = ensureDb().findings.filter((f) => !f.id.startsWith('mem-') && f.scanId === scanId);
     }
     return findings;
   },
   getFindingById: (id: string): Finding | undefined => {
-    if (!id) return undefined;
+    if (!id || id.startsWith('mem-')) return undefined;
     const cleanId = id.trim();
-    const decoded = decodeURIComponent(cleanId);
+    let decoded = cleanId;
+    try {
+      decoded = decodeURIComponent(cleanId);
+    } catch (e) {
+      decoded = cleanId;
+    }
+    const candidateIds = Array.from(new Set([cleanId, decoded].filter(Boolean)));
     const local = ensureDb().findings.find(
       (f) =>
-        f.id === cleanId ||
-        f.id === decoded ||
-        (f.id && decodeURIComponent(f.id) === decoded) ||
-        (f.fingerprint && (f.fingerprint === cleanId || f.fingerprint === decoded))
+        !f.id.startsWith('mem-') &&
+        (candidateIds.includes(f.id) ||
+          (f.id && candidateIds.includes(decodeURIComponent(f.id))))
     );
 
     if (local) {
@@ -625,11 +883,13 @@ export const db = {
         const { data, error } = await client
           .from('findings')
           .select('*')
-          .or(`id.eq.${cleanId},fingerprint.eq.${cleanId}`)
+          .in('id', candidateIds)
+          .limit(1)
           .maybeSingle();
 
         if (!error && data) {
           const finding = mapSupabaseToFinding(data);
+          if (finding.id.startsWith('mem-')) return undefined;
           const dbData = ensureDb();
           const idx = dbData.findings.findIndex((f) => f.id === finding.id);
           if (idx >= 0) {
@@ -650,7 +910,8 @@ export const db = {
   },
   saveFindings: (newFindings: Finding[]): Finding[] => {
     const data = ensureDb();
-    for (const finding of newFindings) {
+    const validFindings = newFindings.filter((f) => f && f.id && !f.id.startsWith('mem-'));
+    for (const finding of validFindings) {
       if (finding.evidence) {
         finding.evidence = redactSecrets(finding.evidence);
       }
@@ -667,11 +928,11 @@ export const db = {
     persistDb();
 
     // Background sync to Supabase when configured
-    if (isSupabaseConfigured() && newFindings.length > 0) {
+    if (isSupabaseConfigured() && validFindings.length > 0) {
       try {
         const client = getSupabaseServerClient();
         if (client) {
-          const payload = newFindings.map((f) => mapFindingToSupabase(f));
+          const payload = validFindings.map((f) => mapFindingToSupabase(f));
           Promise.resolve(
             client.from('findings').upsert(payload, { onConflict: 'id' })
           ).catch((err) => {
@@ -683,7 +944,164 @@ export const db = {
       }
     }
 
-    return newFindings;
+    return validFindings;
+  },
+  deleteFindingsByScanId: (scanId: string): number => {
+    const data = ensureDb();
+    const initial = data.findings.length;
+    data.findings = data.findings.filter((f) => f.scanId !== scanId);
+    const deleted = initial - data.findings.length;
+    if (deleted > 0) {
+      persistDb();
+      if (isSupabaseConfigured()) {
+        try {
+          const client = getSupabaseServerClient();
+          if (client) {
+            Promise.resolve(client.from('findings').delete().eq('scan_id', scanId)).catch((err) => {
+              console.debug('Supabase delete scan findings warning:', err);
+            });
+          }
+        } catch (err) {
+          console.debug('Supabase delete scan findings error:', err);
+        }
+      }
+    }
+    return deleted;
+  },
+  replacePreviousScanFindings: (params: {
+    userId: string;
+    repoName: string;
+    branch: string;
+    newScanId: string;
+    newFindings: Finding[];
+  }): { replacedCount: number; relinkedRoutes: number; relinkedDrafts: number } => {
+    const { userId, repoName, branch, newScanId, newFindings } = params;
+    const cleanRepo = repoName.trim().toLowerCase();
+    const cleanBranch = branch.trim();
+    const data = ensureDb();
+
+    // 1. Identify previous scans for this user + repo + branch
+    const prevScans = data.scans.filter(
+      (s) =>
+        s.id !== newScanId &&
+        ((!s.userId && !userId) || s.userId === userId) &&
+        s.repoName.trim().toLowerCase() === cleanRepo &&
+        s.branch.trim() === cleanBranch
+    );
+
+    if (prevScans.length === 0) {
+      return { replacedCount: 0, relinkedRoutes: 0, relinkedDrafts: 0 };
+    }
+
+    const prevScanIds = prevScans.map((s) => s.id);
+
+    // 2. Map old finding IDs to new finding IDs by fingerprint
+    const newFpToFinding = new Map<string, Finding>();
+    for (const nf of newFindings) {
+      if (nf.id && nf.id.startsWith('mem-')) continue;
+      const fp = nf.fingerprint || computeFindingFingerprint(nf);
+      if (fp) {
+        newFpToFinding.set(fp, nf);
+      }
+    }
+
+    const oldFindings = data.findings.filter((f) => prevScanIds.includes(f.scanId));
+    const idMap = new Map<string, string>();
+    for (const of of oldFindings) {
+      const fp = of.fingerprint || computeFindingFingerprint(of);
+      if (fp && newFpToFinding.has(fp)) {
+        idMap.set(of.id, newFpToFinding.get(fp)!.id);
+      }
+    }
+
+    // 3. Re-link routes
+    let relinkedRoutes = 0;
+    for (const route of data.routes) {
+      let changed = false;
+      if (route.findingId && idMap.has(route.findingId)) {
+        route.findingId = idMap.get(route.findingId)!;
+        changed = true;
+      }
+      if (Array.isArray(route.findingIds)) {
+        const updatedIds = route.findingIds.map((id) => (idMap.has(id) ? idMap.get(id)! : id));
+        if (JSON.stringify(updatedIds) !== JSON.stringify(route.findingIds)) {
+          route.findingIds = updatedIds;
+          changed = true;
+        }
+      }
+      if (prevScanIds.includes(route.scanId)) {
+        route.scanId = newScanId;
+        changed = true;
+      }
+      if (changed) {
+        relinkedRoutes++;
+        if (isSupabaseConfigured()) {
+          try {
+            const client = getSupabaseServerClient();
+            if (client) {
+              const payload = mapRouteToSupabase(route);
+              Promise.resolve(client.from('routes').upsert(payload, { onConflict: 'id' })).catch((err) => {
+                console.debug('Supabase relink route error:', err);
+              });
+            }
+          } catch (err) {
+            console.debug('Supabase relink route error:', err);
+          }
+        }
+      }
+    }
+
+    // 4. Re-link issue drafts
+    let relinkedDrafts = 0;
+    for (const draft of data.drafts) {
+      let changed = false;
+      if (draft.findingId && idMap.has(draft.findingId)) {
+        draft.findingId = idMap.get(draft.findingId)!;
+        changed = true;
+      }
+      if (prevScanIds.includes(draft.scanId)) {
+        draft.scanId = newScanId;
+        changed = true;
+      }
+      if (changed) {
+        relinkedDrafts++;
+        if (isSupabaseConfigured()) {
+          try {
+            const client = getSupabaseServerClient();
+            if (client) {
+              const payload = mapDraftToSupabase(draft);
+              Promise.resolve(client.from('issue_drafts').upsert(payload, { onConflict: 'id' })).catch((err) => {
+                console.debug('Supabase relink draft error:', err);
+              });
+            }
+          } catch (err) {
+            console.debug('Supabase relink draft error:', err);
+          }
+        }
+      }
+    }
+
+    // 5. Delete previous scan findings from local DB mirror
+    const initialFindingsCount = data.findings.length;
+    data.findings = data.findings.filter((f) => !prevScanIds.includes(f.scanId));
+    const replacedCount = initialFindingsCount - data.findings.length;
+    persistDb();
+
+    // 6. Delete previous scan findings from Supabase
+    if (isSupabaseConfigured() && prevScanIds.length > 0) {
+      try {
+        const client = getSupabaseServerClient();
+        if (client) {
+          Promise.resolve(client.from('findings').delete().in('scan_id', prevScanIds)).catch((err) => {
+            console.debug('Supabase delete previous scan findings warning:', err);
+          });
+        }
+      } catch (err) {
+        console.debug('Supabase delete previous scan findings error:', err);
+      }
+    }
+
+    return { replacedCount, relinkedRoutes, relinkedDrafts };
   },
   updateFinding: (finding: Finding): Finding => {
     const data = ensureDb();
@@ -744,11 +1162,65 @@ export const db = {
   // Routes
   getRoutes: (scanId?: string): ContributionRoute[] => {
     const routes = ensureDb().routes;
-    if (scanId) return routes.filter((r) => r.scanId === scanId);
+    if (scanId) {
+      const filtered = routes.filter((r) => r.scanId === scanId);
+      if (filtered.length === 0 && isSupabaseConfigured()) {
+        const fetcher = async () => {
+          try {
+            const client = getSupabaseServerClient();
+            if (!client) return;
+            const { data, error } = await client.from('routes').select('*').eq('scan_id', scanId);
+            if (!error && data && data.length > 0) {
+              const dbData = ensureDb();
+              for (const r of data) {
+                if (!dbData.routes.some((x) => x.id === r.id)) {
+                  dbData.routes.push(mapSupabaseToRoute(r));
+                }
+              }
+              persistDb();
+            }
+          } catch (err) {
+            console.debug('Supabase fetch routes warning:', err);
+          }
+        };
+        fetcher();
+      }
+      return filtered;
+    }
     return routes;
   },
   getRouteById: (id: string): ContributionRoute | undefined => {
-    return ensureDb().routes.find((r) => r.id === id);
+    if (!id) return undefined;
+    const cleanId = id.trim();
+    const local = ensureDb().routes.find((r) => r.id === cleanId);
+    if (local) return local;
+
+    if (!isSupabaseConfigured()) return undefined;
+
+    const fetcher = async (): Promise<ContributionRoute | undefined> => {
+      try {
+        const client = getSupabaseServerClient();
+        if (!client) return undefined;
+        const { data, error } = await client.from('routes').select('*').eq('id', cleanId).maybeSingle();
+        if (!error && data) {
+          const route = mapSupabaseToRoute(data);
+          const dbData = ensureDb();
+          const idx = dbData.routes.findIndex((r) => r.id === route.id);
+          if (idx >= 0) {
+            dbData.routes[idx] = route;
+          } else {
+            dbData.routes.push(route);
+          }
+          persistDb();
+          return route;
+        }
+      } catch (err) {
+        console.debug('Supabase fetch route by id warning:', err);
+      }
+      return undefined;
+    };
+
+    return fetcher() as unknown as ContributionRoute;
   },
   saveRoute: (route: ContributionRoute): ContributionRoute => {
     const data = ensureDb();
@@ -759,6 +1231,21 @@ export const db = {
       data.routes.push(route);
     }
     persistDb();
+
+    if (isSupabaseConfigured()) {
+      try {
+        const client = getSupabaseServerClient();
+        if (client) {
+          const payload = mapRouteToSupabase(route);
+          Promise.resolve(client.from('routes').upsert(payload, { onConflict: 'id' })).catch((err) => {
+            console.debug('Supabase saveRoute upsert warning:', err);
+          });
+        }
+      } catch (err) {
+        console.debug('Supabase client saveRoute error:', err);
+      }
+    }
+
     return route;
   },
   updateRouteStatus: (
@@ -770,6 +1257,21 @@ export const db = {
     if (route) {
       route.status = status;
       persistDb();
+
+      if (isSupabaseConfigured()) {
+        try {
+          const client = getSupabaseServerClient();
+          if (client) {
+            const payload = mapRouteToSupabase(route);
+            Promise.resolve(client.from('routes').upsert(payload, { onConflict: 'id' })).catch((err) => {
+              console.debug('Supabase updateRouteStatus warning:', err);
+            });
+          }
+        } catch (err) {
+          console.debug('Supabase client updateRouteStatus error:', err);
+        }
+      }
+
       return route;
     }
     return undefined;
@@ -783,6 +1285,21 @@ export const db = {
     if (idx >= 0) {
       data.routes[idx] = { ...data.routes[idx], ...updates };
       persistDb();
+
+      if (isSupabaseConfigured()) {
+        try {
+          const client = getSupabaseServerClient();
+          if (client) {
+            const payload = mapRouteToSupabase(data.routes[idx]);
+            Promise.resolve(client.from('routes').upsert(payload, { onConflict: 'id' })).catch((err) => {
+              console.debug('Supabase updateRoute warning:', err);
+            });
+          }
+        } catch (err) {
+          console.debug('Supabase client updateRoute error:', err);
+        }
+      }
+
       return data.routes[idx];
     }
     return undefined;
@@ -791,11 +1308,65 @@ export const db = {
   // Issue Drafts (Maintainer-Ready Markdown Drafts)
   getDrafts: (scanId?: string): IssueDraft[] => {
     const drafts = ensureDb().drafts;
-    if (scanId) return drafts.filter((d) => d.scanId === scanId);
+    if (scanId) {
+      const filtered = drafts.filter((d) => d.scanId === scanId);
+      if (filtered.length === 0 && isSupabaseConfigured()) {
+        const fetcher = async () => {
+          try {
+            const client = getSupabaseServerClient();
+            if (!client) return;
+            const { data, error } = await client.from('issue_drafts').select('*').eq('scan_id', scanId);
+            if (!error && data && data.length > 0) {
+              const dbData = ensureDb();
+              for (const d of data) {
+                if (!dbData.drafts.some((x) => x.id === d.id)) {
+                  dbData.drafts.push(mapSupabaseToDraft(d));
+                }
+              }
+              persistDb();
+            }
+          } catch (err) {
+            console.debug('Supabase fetch drafts warning:', err);
+          }
+        };
+        fetcher();
+      }
+      return filtered;
+    }
     return drafts;
   },
   getDraftById: (id: string): IssueDraft | undefined => {
-    return ensureDb().drafts.find((d) => d.id === id);
+    if (!id) return undefined;
+    const cleanId = id.trim();
+    const local = ensureDb().drafts.find((d) => d.id === cleanId);
+    if (local) return local;
+
+    if (!isSupabaseConfigured()) return undefined;
+
+    const fetcher = async (): Promise<IssueDraft | undefined> => {
+      try {
+        const client = getSupabaseServerClient();
+        if (!client) return undefined;
+        const { data, error } = await client.from('issue_drafts').select('*').eq('id', cleanId).maybeSingle();
+        if (!error && data) {
+          const draft = mapSupabaseToDraft(data);
+          const dbData = ensureDb();
+          const idx = dbData.drafts.findIndex((f) => f.id === draft.id);
+          if (idx >= 0) {
+            dbData.drafts[idx] = draft;
+          } else {
+            dbData.drafts.push(draft);
+          }
+          persistDb();
+          return draft;
+        }
+      } catch (err) {
+        console.debug('Supabase fetch draft by id warning:', err);
+      }
+      return undefined;
+    };
+
+    return fetcher() as unknown as IssueDraft;
   },
   saveDraft: (draft: IssueDraft): IssueDraft => {
     const data = ensureDb();
@@ -806,6 +1377,21 @@ export const db = {
       data.drafts.push(draft);
     }
     persistDb();
+
+    if (isSupabaseConfigured()) {
+      try {
+        const client = getSupabaseServerClient();
+        if (client) {
+          const payload = mapDraftToSupabase(draft);
+          Promise.resolve(client.from('issue_drafts').upsert(payload, { onConflict: 'id' })).catch((err) => {
+            console.debug('Supabase saveDraft warning:', err);
+          });
+        }
+      } catch (err) {
+        console.debug('Supabase client saveDraft error:', err);
+      }
+    }
+
     return draft;
   },
   updateDraft: (
@@ -821,6 +1407,21 @@ export const db = {
         updatedAt: new Date().toISOString(),
       };
       persistDb();
+
+      if (isSupabaseConfigured()) {
+        try {
+          const client = getSupabaseServerClient();
+          if (client) {
+            const payload = mapDraftToSupabase(data.drafts[idx]);
+            Promise.resolve(client.from('issue_drafts').upsert(payload, { onConflict: 'id' })).catch((err) => {
+              console.debug('Supabase updateDraft warning:', err);
+            });
+          }
+        } catch (err) {
+          console.debug('Supabase client updateDraft error:', err);
+        }
+      }
+
       return data.drafts[idx];
     }
     return undefined;
@@ -831,6 +1432,20 @@ export const db = {
     data.drafts = data.drafts.filter((d) => d.id !== draftId);
     if (data.drafts.length !== initialLen) {
       persistDb();
+
+      if (isSupabaseConfigured()) {
+        try {
+          const client = getSupabaseServerClient();
+          if (client) {
+            Promise.resolve(client.from('issue_drafts').delete().eq('id', draftId)).catch((err) => {
+              console.debug('Supabase deleteDraft warning:', err);
+            });
+          }
+        } catch (err) {
+          console.debug('Supabase client deleteDraft error:', err);
+        }
+      }
+
       return true;
     }
     return false;
@@ -840,7 +1455,31 @@ export const db = {
   getTechnologies: (scanId?: string): TechnologyRecord[] => {
     const data = ensureDb();
     if (!data.technologies) data.technologies = [];
-    if (scanId) return data.technologies.filter((t) => t.scanId === scanId);
+    if (scanId) {
+      const filtered = data.technologies.filter((t) => t.scanId === scanId);
+      if (filtered.length === 0 && isSupabaseConfigured()) {
+        const fetcher = async () => {
+          try {
+            const client = getSupabaseServerClient();
+            if (!client) return;
+            const { data: techData, error } = await client.from('technologies').select('*').eq('scan_id', scanId);
+            if (!error && techData && techData.length > 0) {
+              const dbData = ensureDb();
+              for (const t of techData) {
+                if (!dbData.technologies.some((x) => x.id === t.id)) {
+                  dbData.technologies.push(mapSupabaseToTechnology(t));
+                }
+              }
+              persistDb();
+            }
+          } catch (err) {
+            console.debug('Supabase fetch technologies warning:', err);
+          }
+        };
+        fetcher();
+      }
+      return filtered;
+    }
     return data.technologies;
   },
   saveTechnologies: (techs: TechnologyRecord[]): TechnologyRecord[] => {
@@ -855,19 +1494,64 @@ export const db = {
       }
     }
     persistDb();
+
+    if (isSupabaseConfigured() && techs.length > 0) {
+      try {
+        const client = getSupabaseServerClient();
+        if (client) {
+          const payload = techs.map((t) => mapTechnologyToSupabase(t));
+          Promise.resolve(client.from('technologies').upsert(payload, { onConflict: 'id' })).catch((err) => {
+            console.debug('Supabase saveTechnologies warning:', err);
+          });
+        }
+      } catch (err) {
+        console.debug('Supabase client saveTechnologies error:', err);
+      }
+    }
+
     return techs;
   },
 
   // Activities
   getActivities: (userId?: string): ActivityEvent[] => {
     const activities = ensureDb().activities;
-    if (userId) return activities.filter((a) => a.userId === userId);
+    if (userId) {
+      const filtered = activities.filter((a) => a.userId === userId);
+      if (filtered.length === 0 && isSupabaseConfigured() && isValidUuid(userId)) {
+        const fetcher = async () => {
+          try {
+            const client = getSupabaseServerClient();
+            if (!client) return;
+            const { data, error } = await client
+              .from('activities')
+              .select('*')
+              .eq('user_id', userId)
+              .order('timestamp', { ascending: false })
+              .limit(50);
+            if (!error && data && data.length > 0) {
+              const dbData = ensureDb();
+              for (const a of data) {
+                if (!dbData.activities.some((x) => x.id === a.id)) {
+                  dbData.activities.push(mapSupabaseToActivity(a));
+                }
+              }
+              persistDb();
+            }
+          } catch (err) {
+            console.debug('Supabase fetch activities warning:', err);
+          }
+        };
+        fetcher();
+      }
+      return filtered;
+    }
     return activities;
   },
   logActivity: (event: Omit<ActivityEvent, 'id' | 'timestamp'>): ActivityEvent => {
     const data = ensureDb();
     const newEvent: ActivityEvent = {
       ...event,
+      description: redactSecrets(event.description || ''),
       id: `act_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       timestamp: new Date().toISOString(),
     };
@@ -876,6 +1560,21 @@ export const db = {
       data.activities = data.activities.slice(0, 200);
     }
     persistDb();
+
+    if (isSupabaseConfigured()) {
+      try {
+        const client = getSupabaseServerClient();
+        if (client) {
+          const payload = mapActivityToSupabase(newEvent);
+          Promise.resolve(client.from('activities').upsert(payload, { onConflict: 'id' })).catch((err) => {
+            console.debug('Supabase logActivity warning:', err);
+          });
+        }
+      } catch (err) {
+        console.debug('Supabase client logActivity error:', err);
+      }
+    }
+
     return newEvent;
   },
 
@@ -892,6 +1591,28 @@ export const db = {
     data.repositoryMemory = (data.repositoryMemory || []).filter((m) => m.userId !== userId);
     data.contributorProgress = (data.contributorProgress || []).filter((p) => p.userId !== userId);
     persistDb();
+
+    if (isSupabaseConfigured() && isValidUuid(userId)) {
+      try {
+        const client = getSupabaseServerClient();
+        if (client) {
+          Promise.resolve(client.from('scans').delete().eq('user_id', userId)).catch((err) => {
+            console.debug('Supabase client clear user scans warning:', err);
+          });
+          Promise.resolve(client.from('activities').delete().eq('user_id', userId)).catch((err) => {
+            console.debug('Supabase client clear user activities warning:', err);
+          });
+          Promise.resolve(client.from('repository_memory').delete().eq('user_id', userId)).catch((err) => {
+            console.debug('Supabase client clear user memory warning:', err);
+          });
+          Promise.resolve(client.from('contributor_progress').delete().eq('user_id', userId)).catch((err) => {
+            console.debug('Supabase client clear user progress warning:', err);
+          });
+        }
+      } catch (err) {
+        console.debug('Supabase client clearUserData error:', err);
+      }
+    }
   },
 
   // Export full sanitized user bundle
@@ -950,6 +1671,29 @@ export const db = {
     data.repositoryMemory = (data.repositoryMemory || []).filter((m) => m.userId !== userId);
     data.contributorProgress = (data.contributorProgress || []).filter((p) => p.userId !== userId);
     persistDb();
+
+    if (isSupabaseConfigured() && isValidUuid(userId)) {
+      try {
+        const client = getSupabaseServerClient();
+        if (client) {
+          Promise.resolve(client.from('scans').delete().eq('user_id', userId)).catch((err) => {
+            console.debug('Supabase client delete account scans warning:', err);
+          });
+          Promise.resolve(client.from('activities').delete().eq('user_id', userId)).catch((err) => {
+            console.debug('Supabase client delete account activities warning:', err);
+          });
+          Promise.resolve(client.from('repository_memory').delete().eq('user_id', userId)).catch((err) => {
+            console.debug('Supabase client delete account memory warning:', err);
+          });
+          Promise.resolve(client.from('contributor_progress').delete().eq('user_id', userId)).catch((err) => {
+            console.debug('Supabase client delete account progress warning:', err);
+          });
+        }
+      } catch (err) {
+        console.debug('Supabase client deleteUserAccount error:', err);
+      }
+    }
+
     return true;
   },
 

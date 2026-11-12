@@ -35,6 +35,7 @@ import ErrorState from '@/components/ui/ErrorState';
 import LastUpdatedBadge from '@/components/ui/LastUpdatedBadge';
 import AutosaveStatusBadge from '@/components/ui/AutosaveStatusBadge';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
+import { Skeleton, SkeletonCard, useDelayedLoading } from '@/components/ui/Skeleton';
 import { useAutosave } from '@/lib/useAutosave';
 import { useFormValidation, IssueDraftEditSchema, FormFieldError } from '@/lib/validation';
 
@@ -48,6 +49,7 @@ function DraftsContent() {
   const [drafts, setDrafts] = useState<IssueDraft[]>([]);
   const [selectedDraft, setSelectedDraft] = useState<IssueDraft | null>(null);
   const [loading, setLoading] = useState(true);
+  const showDelayedSkeleton = useDelayedLoading(loading, 150);
   const [copied, setCopied] = useState(false);
   const [viewMode, setViewMode] = useState<'preview' | 'edit' | 'raw'>('preview');
   type DraftsError = 'session_expired' | 'forbidden' | 'server_error' | 'network_offline' | 'not_found' | null;
@@ -202,11 +204,11 @@ function DraftsContent() {
       }
 
       let url = activeScan ? `/api/drafts?scanId=${activeScan.id}` : '/api/drafts';
-      let res = await fetch(url);
+      let res = await fetch(url, { cache: 'no-store' });
 
       // Fallback on 404 with scanId: retry general drafts without wiping activeScan
       if (res.status === 404 && activeScan) {
-        res = await fetch('/api/drafts');
+        res = await fetch('/api/drafts', { cache: 'no-store' });
       }
 
       if (currentSeq !== fetchSequenceRef.current) return;
@@ -732,10 +734,20 @@ function DraftsContent() {
       </div>
 
       {loading ? (
-        <div className="text-center py-20">
-          <Loader2 className="w-8 h-8 text-lemonChiffon animate-spin mx-auto mb-2" />
-          <p className="text-xs text-textMuted">Loading issue drafts...</p>
-        </div>
+        showDelayedSkeleton ? (
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
+            <div className="space-y-3 lg:col-span-1">
+              <Skeleton className="h-4 w-28 mb-3" />
+              <SkeletonCard className="h-24" />
+              <SkeletonCard className="h-24" />
+              <SkeletonCard className="h-24" />
+            </div>
+            <div className="lg:col-span-3 space-y-4">
+              <SkeletonCard className="h-32" />
+              <SkeletonCard className="h-96" />
+            </div>
+          </div>
+        ) : null
       ) : drafts.length > 0 && selectedDraft ? (
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
           {/* Drafts Sidebar List (Col 1) */}

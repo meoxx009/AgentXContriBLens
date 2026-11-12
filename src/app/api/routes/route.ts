@@ -28,12 +28,12 @@ export async function POST(req: Request) {
     if (validated.error) return validated.error;
     const { findingId } = validated.data;
 
-    const finding = db.getFindingById(findingId);
+    const finding = await db.getFindingById(findingId);
     if (!finding) {
       return apiError('Finding not found', 404, 'GITHUB_NOT_FOUND');
     }
 
-    const scan = db.getScanById(finding.scanId);
+    const scan = await db.getScanById(finding.scanId);
     if (!scan) {
       return apiError('Associated scan not found', 404, 'GITHUB_NOT_FOUND');
     }

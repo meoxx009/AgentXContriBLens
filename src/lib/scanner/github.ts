@@ -479,6 +479,7 @@ export async function fetchBoundedRepositoryTree(
   });
 
   const selectedBlobs = prioritized.slice(0, MAX_FILES);
+  // Bounded worker pool for parallel retrieval (concurrency cap of 5)
   const FETCH_CONCURRENCY = 5;
 
   type FetchSlotResult = {

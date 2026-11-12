@@ -131,6 +131,15 @@ describe("Prompt P5 — Authentication & Glass Auth Screens", () => {
       expect(getSafeAuthRedirect("/app")).toBe("/app/scan");
       expect(getSafeAuthRedirect("/app/")).toBe("/app/scan");
 
+      // Rejects auth routes themselves to prevent bounce loops (e.g. ?next=/login)
+      expect(getSafeAuthRedirect("/login")).toBe("/app/scan");
+      expect(getSafeAuthRedirect("/signup")).toBe("/app/scan");
+      expect(getSafeAuthRedirect("/forgot-password")).toBe("/app/scan");
+      expect(getSafeAuthRedirect("/login?next=/app/findings")).toBe("/app/scan");
+      expect(getSafeAuthRedirect("/signup?returnTo=/app/dashboard")).toBe("/app/scan");
+      expect(getAuthRedirectFromParams(new URLSearchParams("next=/login"))).toBe("/app/scan");
+      expect(getAuthRedirectFromParams(new URLSearchParams("next=/signup"))).toBe("/app/scan");
+
       // Multiple query parameter fallback support (next, returnTo, callbackUrl)
       expect(getAuthRedirectFromParams(new URLSearchParams("next=/app/findings"))).toBe("/app/findings");
       expect(getAuthRedirectFromParams(new URLSearchParams("returnTo=/app/issue-drafts"))).toBe("/app/issue-drafts");

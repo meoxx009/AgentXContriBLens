@@ -74,33 +74,49 @@ export default function LoginPage() {
       setAuthState("success");
       const destination = getNextRedirect();
 
-      // Verify session cookie receipt via /api/auth/me before redirecting
+      // Verify session before navigating — call GET /api/auth/me once; only navigate when me returns ok
       let authedUser = data.user || null;
-      for (let attempt = 0; attempt < 3; attempt++) {
+      let verifyOk = false;
+      try {
+        const verifyRes = await fetch("/api/auth/me", {
+          credentials: "include",
+          cache: "no-store",
+        });
+        if (verifyRes.ok) {
+          const verifyData = await verifyRes.json();
+          if (verifyData.user) authedUser = verifyData.user;
+          verifyOk = true;
+        }
+      } catch (err) {
+        console.debug("Initial /api/auth/me check failed:", err);
+      }
+
+      if (!verifyOk) {
+        await new Promise((r) => setTimeout(r, 500));
         try {
-          const verifyRes = await fetch("/api/auth/me", {
+          const retryRes = await fetch("/api/auth/me", {
             credentials: "include",
             cache: "no-store",
           });
-          if (verifyRes.ok) {
-            const verifyData = await verifyRes.json();
-            if (verifyData.user) {
-              authedUser = verifyData.user;
-              break;
-            }
+          if (retryRes.ok) {
+            const retryData = await retryRes.json();
+            if (retryData.user) authedUser = retryData.user;
           }
-        } catch {
-          // Retry
+        } catch (err) {
+          console.debug("Retry /api/auth/me check failed:", err);
         }
-        await new Promise((r) => setTimeout(r, 80));
       }
 
       if (authedUser && setUser) {
         setUser(authedUser);
       }
 
-      router.replace(destination);
-      router.refresh();
+      if (typeof window !== "undefined") {
+        window.location.replace(destination);
+      } else {
+        router.replace(destination);
+        router.refresh();
+      }
     } catch {
       setAuthState("server-error");
       const refId = "ERR-" + Math.random().toString(36).substring(2, 8).toUpperCase();

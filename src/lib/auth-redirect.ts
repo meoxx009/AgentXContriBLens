@@ -47,6 +47,16 @@ export function getSafeAuthRedirect(
     return fallback;
   }
 
+  // Reject auth pages to prevent bounce loops (e.g., ?next=/login or ?next=/signup)
+  const pathWithoutQuery = trimmed.split('?')[0].replace(/\/+$/, '') || '/';
+  if (
+    pathWithoutQuery === '/login' ||
+    pathWithoutQuery === '/signup' ||
+    pathWithoutQuery === '/forgot-password'
+  ) {
+    return fallback;
+  }
+
   return trimmed;
 }
 

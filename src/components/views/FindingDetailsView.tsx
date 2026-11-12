@@ -356,7 +356,7 @@ export default function FindingDetailPage({
     }
 
     try {
-      const directRes = await fetch(`/api/findings/${encodeURIComponent(findingId)}`);
+      const directRes = await fetch(`/api/findings/${encodeURIComponent(findingId)}`, { cache: 'no-store' });
       if (directRes.ok) {
         const directData = await directRes.json();
         if (directData.finding) {
@@ -375,7 +375,7 @@ export default function FindingDetailPage({
         // Fallback to checking the active list before marking not found
       }
 
-      const res = await fetch('/api/findings');
+      const res = await fetch('/api/findings', { cache: 'no-store' });
       if (res.ok) {
         const data = await res.json();
         const allFindings: Finding[] = data.findings || [];
@@ -396,7 +396,7 @@ export default function FindingDetailPage({
 
       // If both calls succeeded or 404'd without finding the record:
       setErrorType('not_found');
-      setFetchError(`Finding ID "${findingId}" could not be located in this workspace.`);
+      setFetchError('This finding is from an old scan — rescan the repository to refresh findings');
     } catch (err: any) {
       console.error('Failed to load finding details:', err);
       if (typeof navigator !== 'undefined' && !navigator.onLine) {
@@ -509,8 +509,12 @@ export default function FindingDetailPage({
         const data = await res.json();
         setExplanation(data.explanation);
         showToast('Grounded explanation generated', 'success');
+      } else if (res.status === 403) {
+        const err = await res.json().catch(() => ({}));
+        showToast(err.error || 'Secret finding: disclosure guard blocked explanation.', 'info');
       } else {
-        showToast('Failed to generate explanation', 'error');
+        const err = await res.json().catch(() => ({}));
+        showToast(err.error || 'Failed to generate explanation', 'error');
       }
     } catch {
       showToast('Error requesting AI explanation', 'error');
@@ -588,12 +592,21 @@ export default function FindingDetailPage({
           <EmptyState
             icon={HelpCircle}
             title="Finding Not Found"
-            description={`Finding ID "${findingId}" could not be located in this workspace.`}
+            description="This finding is from an old scan — rescan the repository to refresh findings"
             action={{
-              label: 'Back to Findings',
-              href: '/app/findings',
-              icon: ArrowLeft,
+              label: 'Rescan Repository',
+              href: '/app/scan',
+              icon: Sparkles,
             }}
+            secondaryHint={
+              <Link
+                href="/app/findings"
+                className="inline-flex items-center gap-1.5 text-xs text-textMuted hover:text-lemonChiffon font-mono transition-colors"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                <span>Back to Findings</span>
+              </Link>
+            }
           />
         )}
       </div>

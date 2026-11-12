@@ -160,6 +160,7 @@ export default function ScanView() {
   const showDelayedRecentScans = useDelayedLoading(loadingRecentScans, 150);
   const [refreshingRecentScans, setRefreshingRecentScans] = useState(false);
   const isRefreshingScansRef = useRef(false);
+  const isFetchingRecentScansRef = useRef(false);
   const isScanningRef = useRef(false);
   const scanSeqRef = useRef(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -388,6 +389,8 @@ export default function ScanView() {
   }, [scanResult]);
 
   const fetchRecentScans = useCallback(async () => {
+    if (isFetchingRecentScansRef.current) return;
+    isFetchingRecentScansRef.current = true;
     try {
       const res = await fetch('/api/scans');
       if (res.ok) {
@@ -415,6 +418,7 @@ export default function ScanView() {
         retry: fetchRecentScans,
       });
     } finally {
+      isFetchingRecentScansRef.current = false;
       setLoadingRecentScans(false);
     }
   }, [setSessionExpired]);

@@ -2,6 +2,7 @@ import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import type { User } from "@/types";
 import { db } from "./db";
+import { getSupabaseServerClient, isSupabaseConfigured } from "./supabase";
 
 const JWT_SECRET = process.env.JWT_SECRET || process.env.SESSION_SECRET || "contriblens-local-jwt-secret-key-32-chars-min";
 const AUTH_COOKIE_NAME = "contriblens_session";
@@ -133,7 +134,34 @@ export async function getCurrentUser(req?: Request): Promise<User | null> {
     }
     if (localUser) return localUser;
 
-    // 2. Self-heal: If session JWT is cryptographically valid and signed with JWT_SECRET,
+    // 2. Cold instance / Supabase resolution: check if Supabase has user profile
+    if (isSupabaseConfigured()) {
+      try {
+        const client = getSupabaseServerClient();
+        if (client) {
+          const { data, error } = await client
+            .from("profiles")
+            .select("*")
+            .eq("id", session.userId)
+            .maybeSingle();
+
+          if (!error && data) {
+            localUser = db.createUser({
+              id: data.id,
+              email: data.email || session.email,
+              name: data.full_name || data.name || session.name || session.email.split("@")[0] || "Contributor",
+              createdAt: data.created_at || new Date().toISOString(),
+              settings: data.settings || undefined,
+            });
+            return localUser;
+          }
+        }
+      } catch (err) {
+        console.debug("Supabase user resolution fallback warning:", err);
+      }
+    }
+
+    // 3. Self-heal: If session JWT is cryptographically valid and signed with JWT_SECRET,
     // restore the user record in DB so sessions are resilient across server restarts and DB wipes
     if (session.userId && session.email) {
       localUser = db.createUser({

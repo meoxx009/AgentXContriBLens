@@ -397,6 +397,15 @@ export async function executeRepositoryScan(
     comparison,
   };
 
+  // Replace previous scan findings for the same user + repo + branch (re-link routes & drafts by fingerprint)
+  db.replacePreviousScanFindings({
+    userId,
+    repoName: `${owner}/${repo}`,
+    branch: finalBranch,
+    newScanId: scanId,
+    newFindings: enrichedFindings,
+  });
+
   // Save to DB
   db.saveScan(scanSummary);
   db.saveFindings(enrichedFindings);

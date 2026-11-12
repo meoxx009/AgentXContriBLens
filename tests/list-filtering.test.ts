@@ -439,5 +439,94 @@ describe('List Filtering Upgrade — Findings and Scans', () => {
       expect(isEmptyAfterFilter).toBe(true);
       expect(isCompletelyEmpty).toBe(false);
     });
+
+    it('handles category aliases (dependency matches dependencies, actions matches github-actions)', async () => {
+      db.saveFindings([
+        {
+          id: `fnd_dep_alias_${Date.now()}`,
+          scanId: scanId1,
+          category: 'dependencies',
+          ruleId: 'DEP-OUTDATED',
+          title: 'Outdated package in dependencies',
+          severity: 'medium',
+          confidence: 'HIGH',
+          sourceTool: 'DependencyAuditor',
+          file: 'package.json',
+          impact: 'Known vulnerability in package',
+          fixHint: 'Upgrade version',
+          skills: ['npm'],
+          learningResources: [],
+          disclosureMode: 'public-issue',
+          redacted: false,
+          evidenceHash: 'dep123hash',
+          createdAt: new Date().toISOString(),
+        } as any,
+      ]);
+
+      const resDep = await getFindings(
+        authReq(`http://localhost:3000/api/findings?scanId=${scanId1}&category=dependency`)
+      );
+      expect(resDep.status).toBe(200);
+      const dataDep = await resDep.json();
+      expect(dataDep.ok).toBe(true);
+      expect(dataDep.findings.length).toBeGreaterThan(0);
+      expect(dataDep.findings.every((f: any) => f.category === 'dependencies' || f.category === 'dependency')).toBe(true);
+
+      const resAct = await getFindings(
+        authReq(`http://localhost:3000/api/findings?scanId=${scanId1}&category=actions`)
+      );
+      expect(resAct.status).toBe(200);
+      const dataAct = await resAct.json();
+      expect(dataAct.ok).toBe(true);
+      expect(dataAct.findings.length).toBeGreaterThan(0);
+      expect(dataAct.findings.every((f: any) => f.category === 'github-actions' || f.category === 'actions')).toBe(true);
+    });
+
+    it('returns total unfiltered count alongside filtered findings', async () => {
+      const res = await getFindings(
+        authReq(`http://localhost:3000/api/findings?scanId=${scanId1}&severity=CRITICAL`)
+      );
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.ok).toBe(true);
+      expect(data.total).toBe(3); // 3 total findings in scan1
+      expect(data.findings.length).toBe(1); // 1 critical finding
+    });
+
+    it('safely handles findings with undefined optional fields without crashing', async () => {
+      const sparseScanId = `scan_sparse_${Date.now()}`;
+      db.saveScan({
+        ...scan1,
+        id: sparseScanId,
+      });
+      db.saveFindings([
+        {
+          id: 'fnd_sparse_1',
+          scanId: sparseScanId,
+          ruleId: 'SPARSE-RULE',
+          title: 'Sparse test finding',
+          severity: 'LOW',
+          confidence: 0.5,
+          sourceTool: 'test',
+          file: null,
+          category: 'repository-health',
+          impact: 'none',
+          fixHint: 'none',
+          skills: [],
+          learningResources: [],
+          disclosureMode: 'public-issue',
+          redacted: false,
+          evidenceHash: 'abc',
+          createdAt: new Date().toISOString(),
+        } as any,
+      ]);
+
+      const res = await getFindings(
+        authReq(`http://localhost:3000/api/findings?scanId=${sparseScanId}&file=test&search=sparse&readiness=all&diff=all`)
+      );
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.ok).toBe(true);
+    });
   });
 });

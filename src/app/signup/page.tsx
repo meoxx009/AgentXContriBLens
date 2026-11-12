@@ -82,10 +82,44 @@ export default function SignupPage() {
 
       setAuthState("success");
       const destination = getNextRedirect();
+
+      // Verify session before navigating — call GET /api/auth/me once; only navigate when me returns ok
+      let authedUser = data.user || null;
+      let verifyOk = false;
+      try {
+        const verifyRes = await fetch("/api/auth/me", {
+          credentials: "include",
+          cache: "no-store",
+        });
+        if (verifyRes.ok) {
+          const verifyData = await verifyRes.json();
+          if (verifyData.user) authedUser = verifyData.user;
+          verifyOk = true;
+        }
+      } catch (err) {
+        console.debug("Initial /api/auth/me check failed:", err);
+      }
+
+      if (!verifyOk) {
+        await new Promise((r) => setTimeout(r, 500));
+        try {
+          const retryRes = await fetch("/api/auth/me", {
+            credentials: "include",
+            cache: "no-store",
+          });
+          if (retryRes.ok) {
+            const retryData = await retryRes.json();
+            if (retryData.user) authedUser = retryData.user;
+          }
+        } catch (err) {
+          console.debug("Retry /api/auth/me check failed:", err);
+        }
+      }
+
       if (typeof window !== "undefined") {
-        window.location.href = destination;
+        window.location.replace(destination);
       } else {
-        router.push(destination);
+        router.replace(destination);
         router.refresh();
       }
     } catch {

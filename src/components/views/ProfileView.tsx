@@ -138,7 +138,7 @@ export default function ProfileView() {
     let isMounted = true;
     async function loadData() {
       try {
-        const res = await fetch('/api/profile');
+        const res = await fetch('/api/profile', { cache: 'no-store' });
         if (res.ok && isMounted && !isLoggingOutRef.current) {
           const data = await res.json();
           if (data.activities && isMounted && !isLoggingOutRef.current) {
@@ -152,7 +152,7 @@ export default function ProfileView() {
       }
 
       try {
-        const statusRes = await fetch('/api/integrations/status');
+        const statusRes = await fetch('/api/integrations/status', { cache: 'no-store' });
         if (statusRes.ok && isMounted && !isLoggingOutRef.current) {
           const statusData = await statusRes.json();
           if (isMounted && !isLoggingOutRef.current) {
@@ -328,7 +328,11 @@ export default function ProfileView() {
     setShowLogoutWithUnsavedConfirm(false);
     showToast('Logged out successfully', 'info');
     router.push('/');
-    router.refresh();
+    if (typeof window !== 'undefined') {
+      window.location.replace('/');
+    } else {
+      router.refresh();
+    }
   };
 
   const handleLogoutClick = () => {

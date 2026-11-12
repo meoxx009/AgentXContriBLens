@@ -34,6 +34,7 @@ import { ContributionsStackSkeleton, useDelayedLoading } from '@/components/ui/S
 import EmptyState from '@/components/ui/EmptyState';
 import ErrorState from '@/components/ui/ErrorState';
 import LastUpdatedBadge from '@/components/ui/LastUpdatedBadge';
+import ConfirmDialog from '@/components/ui/ConfirmDialog';
 
 function ContributionsContent() {
   const router = useRouter();
@@ -52,8 +53,19 @@ function ContributionsContent() {
   const [generatingDraftId, setGeneratingDraftId] = useState<string | null>(null);
   const [downloadingPackId, setDownloadingPackId] = useState<string | null>(null);
   const [updatingRouteId, setUpdatingRouteId] = useState<string | null>(null);
+  const [pendingStatusChange, setPendingStatusChange] = useState<{
+    routeId: string;
+    newStatus: ContributionRoute['status'];
+  } | null>(null);
   const [generatingAllRoutes, setGeneratingAllRoutes] = useState(false);
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(highlightedRouteId);
+
+  // Sync highlightedRouteId from query parameters whenever it changes
+  useEffect(() => {
+    if (highlightedRouteId) {
+      setSelectedRouteId(highlightedRouteId);
+    }
+  }, [highlightedRouteId]);
 
   // Filters
   const [difficultyFilter, setDifficultyFilter] = useState<string>('all');
@@ -106,15 +118,15 @@ function ContributionsContent() {
       let findingUrl = activeScan ? `/api/findings?scanId=${activeScan.id}` : '/api/findings';
 
       let [routeRes, findingRes] = await Promise.all([
-        fetch(routeUrl),
-        fetch(findingUrl),
+        fetch(routeUrl, { cache: 'no-store' }),
+        fetch(findingUrl, { cache: 'no-store' }),
       ]);
 
       // Fallback if 404 with scanId: retry general routes without wiping activeScan
       if ((routeRes.status === 404 || findingRes.status === 404) && activeScan) {
         [routeRes, findingRes] = await Promise.all([
-          fetch('/api/routes'),
-          fetch('/api/findings'),
+          fetch('/api/routes', { cache: 'no-store' }),
+          fetch('/api/findings', { cache: 'no-store' }),
         ]);
       }
 
@@ -190,9 +202,16 @@ function ContributionsContent() {
     }
   };
 
-  const handleUpdateStatus = async (routeId: string, newStatus: ContributionRoute['status']) => {
+  const executeStatusChange = async (routeId: string, newStatus: ContributionRoute['status']) => {
     if (updatingRouteId) return;
+    const previousRoutes = [...routes];
     setUpdatingRouteId(routeId);
+
+    // 1. Optimistic UI update
+    setRoutes((prev) =>
+      prev.map((r) => (r.id === routeId ? { ...r, status: newStatus } : r))
+    );
+
     try {
       const res = await fetch('/api/routes', {
         method: 'PATCH',
@@ -201,18 +220,38 @@ function ContributionsContent() {
       });
       const data = await res.json();
       if (res.ok) {
-        setRoutes((prev) =>
-          prev.map((r) => (r.id === routeId ? { ...r, status: newStatus } : r))
-        );
+        if (data.route) {
+          setRoutes((prev) =>
+            prev.map((r) => (r.id === routeId ? { ...r, ...data.route } : r))
+          );
+        }
         showToast(`Route status updated to "${newStatus.replace('-', ' ')}"`, 'info');
       } else {
-        showToast(data.error || 'Failed to update route status', 'error');
+        // Truthful rollback
+        setRoutes(previousRoutes);
+        showToast(data.error || 'Failed to update route status. Reverted.', 'error');
       }
-    } catch {
-      showToast('Network error updating route status', 'error');
+    } catch (err) {
+      // Truthful rollback
+      setRoutes(previousRoutes);
+      showToast('Network error updating route status. Reverted.', 'error');
     } finally {
       setUpdatingRouteId(null);
+      setPendingStatusChange(null);
     }
+  };
+
+  const handleUpdateStatus = (routeId: string, newStatus: ContributionRoute['status']) => {
+    const route = routes.find((r) => r.id === routeId);
+    if (!route || route.status === newStatus) return;
+
+    // Destructive / progress reset confirmation
+    if (newStatus === 'not-started' && route.status && route.status !== 'not-started') {
+      setPendingStatusChange({ routeId, newStatus });
+      return;
+    }
+
+    executeStatusChange(routeId, newStatus);
   };
 
   const handleGenerateDraft = async (routeId: string) => {
@@ -1367,6 +1406,24 @@ function ContributionsContent() {
           />
         )}
       </section>
+
+      {/* Confirmation Dialog: Reset Route Progress */}
+      <ConfirmDialog
+        isOpen={Boolean(pendingStatusChange)}
+        title="Reset Route Progress?"
+        description="Are you sure you want to reset this contribution route back to Not Started?"
+        consequenceWarning="This will reset your logged progress for this route in your workspace."
+        confirmLabel="Reset Route"
+        cancelLabel="Keep Progress"
+        isDestructive={true}
+        isBusy={Boolean(updatingRouteId)}
+        onConfirm={() => {
+          if (pendingStatusChange) {
+            executeStatusChange(pendingStatusChange.routeId, pendingStatusChange.newStatus);
+          }
+        }}
+        onCancel={() => setPendingStatusChange(null)}
+      />
 
     </div>
   );

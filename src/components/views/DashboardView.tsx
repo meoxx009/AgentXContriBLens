@@ -276,10 +276,10 @@ export default function DashboardView() {
       }
 
       const [scansRes, routesRes, findingsRes, profileRes] = await Promise.all([
-        fetch(buildScansUrl()),
-        fetch('/api/routes'),
-        fetch('/api/findings'),
-        fetch('/api/profile'),
+        fetch(buildScansUrl(), { cache: 'no-store' }),
+        fetch('/api/routes', { cache: 'no-store' }),
+        fetch('/api/findings', { cache: 'no-store' }),
+        fetch('/api/profile', { cache: 'no-store' }),
       ]);
 
       // 1. Session expiration detection (401)

@@ -39,6 +39,7 @@ import { RouteDetailsSkeleton, useDelayedLoading } from '@/components/ui/Skeleto
 import EmptyState from '@/components/ui/EmptyState';
 import ErrorState from '@/components/ui/ErrorState';
 import LastUpdatedBadge from '@/components/ui/LastUpdatedBadge';
+import ConfirmDialog from '@/components/ui/ConfirmDialog';
 
 const ROUTE_STEPS = [
   { id: 'not-started', label: 'Not Started', step: 1, desc: 'Triage & plan inspected' },
@@ -79,6 +80,7 @@ export default function RouteDetailPage({
     message: string;
     retry: () => void;
   } | null>(null);
+  const [pendingStatus, setPendingStatus] = useState<ContributionRoute['status'] | null>(null);
 
   const [syncingSkillId, setSyncingSkillId] = useState<string | null>(null);
   const [skillError, setSkillError] = useState<{
@@ -104,7 +106,7 @@ export default function RouteDetailPage({
     }
 
     try {
-      const res = await fetch(`/api/routes/${routeId}`);
+      const res = await fetch(`/api/routes/${routeId}`, { cache: 'no-store' });
       if (res.ok) {
         const data = await res.json();
         if (data.route) {
@@ -125,7 +127,7 @@ export default function RouteDetailPage({
       }
 
       // Fallback to list search
-      const listRes = await fetch('/api/routes');
+      const listRes = await fetch('/api/routes', { cache: 'no-store' });
       if (listRes.ok) {
         const data = await listRes.json();
         const found = (data.routes || []).find((r: ContributionRoute) => r.id === routeId);
@@ -133,7 +135,7 @@ export default function RouteDetailPage({
           setRoute(found);
           const fId = found.findingId || (found.findingIds && found.findingIds[0]);
           if (fId) {
-            const fRes = await fetch('/api/findings');
+            const fRes = await fetch('/api/findings', { cache: 'no-store' });
             if (fRes.ok) {
               const fData = await fRes.json();
               const matchedFinding = (fData.findings || []).find((f: Finding) => f.id === fId);
@@ -217,7 +219,17 @@ export default function RouteDetailPage({
       showToast('Network error updating status; reverted', 'error');
     } finally {
       setUpdatingStatus(false);
+      setPendingStatus(null);
     }
+  };
+
+  const handleStatusClick = (newStatus: ContributionRoute['status']) => {
+    if (!route || updatingStatus || route.status === newStatus) return;
+    if (newStatus === 'not-started' && route.status && route.status !== 'not-started') {
+      setPendingStatus(newStatus);
+      return;
+    }
+    handleUpdateStatus(newStatus);
   };
 
   const handleToggleSkill = async (skillId: string, currentCompleted: boolean) => {
@@ -581,7 +593,7 @@ export default function RouteDetailPage({
                 <button
                   key={step.id}
                   type="button"
-                  onClick={() => handleUpdateStatus(step.id)}
+                  onClick={() => handleStatusClick(step.id)}
                   disabled={updatingStatus}
                   className={`min-h-[44px] p-3.5 rounded-xl text-left border transition-all cursor-pointer relative press-spring touch-manipulation ${
                     isCurrent
@@ -887,6 +899,24 @@ export default function RouteDetailPage({
         </div>
 
       </div>
+
+      {/* Confirmation Dialog: Reset Route Progress */}
+      <ConfirmDialog
+        isOpen={Boolean(pendingStatus)}
+        title="Reset Route Progress?"
+        description="Are you sure you want to reset this contribution route back to Not Started?"
+        consequenceWarning="This will reset your logged progress for this route in your workspace."
+        confirmLabel="Reset Route"
+        cancelLabel="Keep Progress"
+        isDestructive={true}
+        isBusy={updatingStatus}
+        onConfirm={() => {
+          if (pendingStatus) {
+            handleUpdateStatus(pendingStatus);
+          }
+        }}
+        onCancel={() => setPendingStatus(null)}
+      />
     </div>
   );
 }

@@ -6,6 +6,36 @@ import { apiError, requireAuth } from '@/lib/api-guard';
 
 export const dynamic = 'force-dynamic';
 
+function isFalsePositiveOrSynthetic(f: { id?: string; file?: string | null }): boolean {
+  if (!f.id || f.id.startsWith('mem-')) return true;
+  const filePath = (f.file || '').toLowerCase().trim();
+  if (!filePath) return false;
+
+  // Directory exclusions: node_modules/, vendor/
+  if (
+    filePath.startsWith('node_modules/') ||
+    filePath.includes('/node_modules/') ||
+    filePath.startsWith('vendor/') ||
+    filePath.includes('/vendor/')
+  ) {
+    return true;
+  }
+
+  // Minified file exclusions: *.min.js
+  if (filePath.endsWith('.min.js') || filePath.includes('.min.js/')) {
+    return true;
+  }
+
+  // Lockfile exclusions: package-lock.json, yarn.lock, pnpm-lock.yaml, poetry.lock
+  const basename = filePath.split('/').pop() || filePath;
+  const lockFiles = ['package-lock.json', 'yarn.lock', 'pnpm-lock.yaml', 'poetry.lock'];
+  if (lockFiles.includes(basename)) {
+    return true;
+  }
+
+  return false;
+}
+
 export async function GET(req: Request) {
   try {
     const auth = await requireAuth(req);
@@ -15,14 +45,14 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const scanId = searchParams.get('scanId') || undefined;
 
-    const severity = searchParams.get('severity')?.toUpperCase();
-    const category = searchParams.get('category')?.toLowerCase();
-    const search = searchParams.get('search')?.toLowerCase();
-    const readinessLabel = searchParams.get('readinessLabel')?.toLowerCase();
-    const diffStatus = searchParams.get('diffStatus')?.toLowerCase();
-    const ruleId = searchParams.get('ruleId')?.toLowerCase();
-    const file = searchParams.get('file')?.toLowerCase();
-    const status = searchParams.get('status')?.toLowerCase();
+    const severity = (searchParams.get('severity') || '').trim().toUpperCase();
+    const category = (searchParams.get('category') || '').trim().toLowerCase();
+    const search = (searchParams.get('search') || searchParams.get('q') || '').trim().toLowerCase();
+    const readinessLabel = (searchParams.get('readinessLabel') || searchParams.get('readiness') || '').trim().toLowerCase();
+    const diffStatus = (searchParams.get('diffStatus') || searchParams.get('diff') || '').trim().toLowerCase();
+    const ruleId = (searchParams.get('ruleId') || '').trim().toLowerCase();
+    const file = (searchParams.get('file') || searchParams.get('filePath') || '').trim().toLowerCase();
+    const status = (searchParams.get('status') || '').trim().toLowerCase();
 
     let findings = db.getFindings(scanId);
 
@@ -51,6 +81,17 @@ export async function GET(req: Request) {
       findings = findings.filter((f) => userScanIds.includes(f.scanId));
     }
 
+    // Filter out synthetic memory findings and false-positive sources (node_modules, vendor, lockfiles, .min.js)
+    findings = findings.filter((f) => !isFalsePositiveOrSynthetic(f));
+
+    // Deduplicate findings by finding ID to ensure each finding appears exactly once
+    const seenFindingIds = new Set<string>();
+    findings = findings.filter((f) => {
+      if (seenFindingIds.has(f.id)) return false;
+      seenFindingIds.add(f.id);
+      return true;
+    });
+
     // Ensure all returned findings are populated with readiness, urgency, and evidenceChain
     findings = findings.map((f) => {
       const r = f.readiness || calculateContributionReadiness(f);
@@ -66,15 +107,29 @@ export async function GET(req: Request) {
       };
     });
 
+    // Record total unfiltered count before applying active filters
+    const totalUnfiltered = findings.length;
+
+    // 1. Severity filter
     if (severity && severity !== 'ALL') {
-      findings = findings.filter((f) => f.severity.toUpperCase() === severity);
+      findings = findings.filter((f) => {
+        const sev = (f.severity || '').toString().trim().toUpperCase();
+        return sev === severity;
+      });
     }
 
+    // 2. Category filter (null-safe + handles singular/plural aliases)
     if (category && category !== 'all') {
       findings = findings.filter((f) => {
-        const cat = f.category.toLowerCase();
-        if (category === 'actions' || category === 'github-actions') {
-          return cat === 'github-actions' || cat === 'actions';
+        const cat = (f.category || '').toString().trim().toLowerCase();
+        if (category === 'actions' || category === 'github-actions' || category === 'workflow') {
+          return cat === 'github-actions' || cat === 'actions' || cat === 'workflow';
+        }
+        if (category === 'dependency' || category === 'dependencies') {
+          return cat === 'dependency' || cat === 'dependencies';
+        }
+        if (category === 'secret' || category === 'secrets') {
+          return cat === 'secret' || cat === 'secrets';
         }
         if (category === 'health' || category === 'repository-health') {
           return cat === 'repository-health' || cat === 'health';
@@ -83,43 +138,65 @@ export async function GET(req: Request) {
       });
     }
 
+    // 3. Readiness Label filter (null-safe + normalized hyphen/underscore)
     if (readinessLabel && readinessLabel !== 'all') {
-      findings = findings.filter((f) => f.readiness?.label === readinessLabel);
+      findings = findings.filter((f) => {
+        const rawLabel = (f.readiness?.label || '').toString().trim().toLowerCase().replace(/_/g, '-');
+        const targetLabel = readinessLabel.replace(/_/g, '-');
+        return rawLabel === targetLabel;
+      });
     }
 
+    // 4. Diff Status filter (null-safe + normalized)
     if (diffStatus && diffStatus !== 'all') {
-      findings = findings.filter((f) => f.diffStatus === diffStatus);
+      findings = findings.filter((f) => {
+        const ds = (f.diffStatus || 'new').toString().trim().toLowerCase().replace(/_/g, '-');
+        const targetDiff = diffStatus.replace(/_/g, '-');
+        return ds === targetDiff;
+      });
     }
 
+    // 5. Search query filter (null-safe across all fields)
     if (search) {
-      findings = findings.filter(
-        (f) =>
-          f.title.toLowerCase().includes(search) ||
-          (f.file && f.file.toLowerCase().includes(search)) ||
-          f.ruleId.toLowerCase().includes(search) ||
-          f.impact.toLowerCase().includes(search) ||
-          (f.evidence && f.evidence.toLowerCase().includes(search))
-      );
+      findings = findings.filter((f) => {
+        const title = (f.title || '').toLowerCase();
+        const filePath = (f.file || '').toLowerCase();
+        const rid = (f.ruleId || '').toLowerCase();
+        const impact = (f.impact || '').toLowerCase();
+        const evidence = (f.evidence || f.redactedEvidence || '').toLowerCase();
+        const fixHint = (f.fixHint || '').toLowerCase();
+        return (
+          title.includes(search) ||
+          filePath.includes(search) ||
+          rid.includes(search) ||
+          impact.includes(search) ||
+          evidence.includes(search) ||
+          fixHint.includes(search)
+        );
+      });
     }
 
+    // 6. Rule ID filter
     if (ruleId && ruleId !== 'all') {
-      findings = findings.filter(
-        (f) =>
-          f.ruleId.toLowerCase() === ruleId ||
-          f.ruleId.toLowerCase().includes(ruleId)
-      );
+      findings = findings.filter((f) => {
+        const rid = (f.ruleId || '').toLowerCase();
+        return rid === ruleId || rid.includes(ruleId);
+      });
     }
 
+    // 7. File path filter
     if (file) {
-      findings = findings.filter(
-        (f) => f.file && f.file.toLowerCase().includes(file)
-      );
+      findings = findings.filter((f) => {
+        const filePath = (f.file || '').toLowerCase();
+        return filePath.includes(file);
+      });
     }
 
+    // 8. Status filter
     if (status && status !== 'all') {
       if (status === 'open') {
         findings = findings.filter(
-          (f) => !f.reviewed && f.status !== 'resolved' && f.diffStatus !== 'resolved'
+          (f) => !f.reviewed && f.status !== 'resolved' && f.diffStatus !== 'resolved' && f.status !== 'dismissed'
         );
       } else if (status === 'approved' || status === 'reviewed') {
         findings = findings.filter((f) => Boolean(f.reviewed));
@@ -148,7 +225,7 @@ export async function GET(req: Request) {
     });
 
     return NextResponse.json(
-      { findings, ok: true, success: true },
+      { findings, total: totalUnfiltered, ok: true, success: true },
       {
         headers: {
           'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
@@ -180,7 +257,7 @@ export async function POST(req: Request) {
 
     const { findingId, action } = body || {};
 
-    if (!findingId) {
+    if (!findingId || typeof findingId !== 'string' || findingId.startsWith('mem-')) {
       return apiError('findingId is required', 400, 'AUTH_INVALID_INPUT');
     }
 

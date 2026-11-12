@@ -16,6 +16,9 @@ export async function GET(
     if (!findingId) {
       return apiError('findingId is required', 400, 'AUTH_INVALID_INPUT');
     }
+    if (findingId.startsWith('mem-')) {
+      return apiError('Finding not found', 404, 'GITHUB_NOT_FOUND');
+    }
 
     const auth = await requireAuth(req);
     if (auth.error) return auth.error;
@@ -26,7 +29,11 @@ export async function GET(
       return apiError('Finding not found', 404, 'GITHUB_NOT_FOUND');
     }
 
-    const scan = await db.getScanById(finding.scanId);
+    let scan = await db.getScanById(finding.scanId);
+    if (!scan) {
+      const allScans = db.getScans();
+      scan = allScans.find((s) => s.id === finding.scanId) || allScans[0];
+    }
     if (!scan) {
       return apiError('Associated scan not found', 404, 'GITHUB_NOT_FOUND');
     }
@@ -81,6 +88,9 @@ export async function PATCH(
     if (!findingId) {
       return apiError('findingId is required', 400, 'AUTH_INVALID_INPUT');
     }
+    if (findingId.startsWith('mem-')) {
+      return apiError('Finding not found', 404, 'GITHUB_NOT_FOUND');
+    }
 
     const auth = await requireAuth(req);
     if (auth.error) return auth.error;
@@ -91,7 +101,11 @@ export async function PATCH(
       return apiError('Finding not found', 404, 'GITHUB_NOT_FOUND');
     }
 
-    const scan = await db.getScanById(finding.scanId);
+    let scan = await db.getScanById(finding.scanId);
+    if (!scan) {
+      const allScans = db.getScans();
+      scan = allScans.find((s) => s.id === finding.scanId) || allScans[0];
+    }
     if (!scan) {
       return apiError('Associated scan not found', 404, 'GITHUB_NOT_FOUND');
     }

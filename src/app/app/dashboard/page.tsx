@@ -1,20 +1,18 @@
 'use client';
 
-import React, { Suspense } from 'react';
-import DashboardView from '@/components/views/DashboardView';
-import { Loader2 } from 'lucide-react';
+import React from 'react';
+import dynamic from 'next/dynamic';
+import { ScanListSkeleton } from '@/components/ui/Skeleton';
+
+const DashboardView = dynamic(() => import('@/components/views/DashboardView'), {
+  ssr: false,
+  loading: () => (
+    <div className="max-w-6xl mx-auto px-4 py-8 space-y-6">
+      <ScanListSkeleton count={4} />
+    </div>
+  ),
+});
 
 export default function DashboardPage() {
-  return (
-    <Suspense
-      fallback={
-        <div className="min-h-screen bg-transparent flex flex-col items-center justify-center text-sustainableLinen">
-          <Loader2 className="w-8 h-8 text-lemonChiffon animate-spin mb-3" />
-          <p className="text-xs font-mono text-platinumSilver/60">Loading workspace dashboard...</p>
-        </div>
-      }
-    >
-      <DashboardView />
-    </Suspense>
-  );
+  return <DashboardView />;
 }

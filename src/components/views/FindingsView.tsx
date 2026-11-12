@@ -287,6 +287,132 @@ function CodeContextViewer({
   );
 }
 
+interface FindingRowItemProps {
+  finding: Finding;
+  rowId: string;
+  isSelected: boolean;
+  isChecked: boolean;
+  onSelect: (finding: Finding) => void;
+  onToggleSelect: (id: string) => void;
+}
+
+const FindingRowItem = React.memo(function FindingRowItem({
+  finding,
+  rowId,
+  isSelected,
+  isChecked,
+  onSelect,
+  onToggleSelect,
+}: FindingRowItemProps) {
+  const isCritical = finding.severity?.toUpperCase() === 'CRITICAL';
+  const readiness = finding.readiness;
+  const topReason = Array.isArray(readiness?.reasons) ? readiness.reasons[0] : undefined;
+
+  let cardStyle = 'glass-panel hover:border-platinumSilver/30';
+  if (isSelected) {
+    if (isCritical) {
+      cardStyle = 'border-rosewood bg-rosewood/25 shadow-md ring-1 ring-rosewood/50';
+    } else {
+      cardStyle = 'border-electricTangerine shadow-liquid-glow bg-blackHole/80';
+    }
+  } else if (isCritical) {
+    cardStyle = 'border-rosewood/40 bg-rosewood/10 hover:border-rosewood/70';
+  }
+
+  return (
+    <li role="listitem" id={`finding-${finding.id}`}>
+      <div
+        className={`w-full p-4 rounded-xl border transition-all ${cardStyle} flex items-start gap-2.5 cursor-pointer touch-manipulation focus:outline-none focus:ring-1 focus:ring-lemonChiffon/60`}
+        onClick={() => onSelect(finding)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onSelect(finding);
+          }
+        }}
+        tabIndex={0}
+        role="button"
+        aria-pressed={isSelected}
+        aria-label={`View details for finding: ${finding.title}`}
+      >
+        {/* Individual Row Checkbox with Accessible Touch Target */}
+        <label
+          htmlFor={`finding-checkbox-${finding.id}`}
+          className="min-w-[44px] min-h-[44px] -ml-2 -mt-2 shrink-0 flex items-center justify-center cursor-pointer touch-manipulation"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <input
+            type="checkbox"
+            id={`finding-checkbox-${finding.id}`}
+            name={`select-finding-${finding.id}`}
+            checked={isChecked}
+            onChange={() => onToggleSelect(finding.id)}
+            aria-label={`Select finding: ${finding.title}`}
+            className="w-4 h-4 rounded border-borderDark bg-black text-lemonChiffon focus:ring-1 focus:ring-lemonChiffon cursor-pointer touch-manipulation"
+          />
+        </label>
+
+        {/* Card Body Clickable Region */}
+        <div className="flex-1 min-w-0 text-left">
+          {/* Top Badges Row: Severity (Text + Icon), Readiness, Diff Status */}
+          <div className="flex flex-wrap items-center justify-between text-[11px] mb-2 gap-1.5">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <SeverityBadge severity={finding.severity} />
+
+              {finding.urgencyScore !== undefined && (
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-black border border-borderDark text-textMuted">
+                  Urg: {finding.urgencyScore}
+                </span>
+              )}
+
+              {readiness && (
+                <span className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider border ${getReadinessBadge(readiness.label)}`}>
+                  Readiness: {readiness.total ?? 0}/100
+                </span>
+              )}
+
+              {finding.diffStatus && finding.diffStatus !== 'unchanged' && (
+                <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono uppercase font-bold border ${getDiffStatusBadge(finding.diffStatus)}`}>
+                  {finding.diffStatus}
+                </span>
+              )}
+
+              {finding.reviewed && (
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-950/60 text-emerald-300 border border-emerald-600/40 flex items-center gap-1">
+                  <CheckCircle2 className="w-3 h-3" /> Reviewed
+                </span>
+              )}
+            </div>
+
+            <span className="text-[10px] font-mono text-textMuted">
+              {typeof finding.confidence === 'number'
+                ? `${Math.round(finding.confidence * 100)}%`
+                : finding.confidence || 'HIGH'}{' '}
+              Conf.
+            </span>
+          </div>
+
+          <h4 className="text-xs font-heading font-semibold text-textPrimary line-clamp-2">
+            {finding.title}
+          </h4>
+
+          {/* Top Readiness reason preview */}
+          {topReason && (
+            <p className="mt-1.5 text-[11px] text-textMuted line-clamp-1 italic">
+              💡 {topReason}
+            </p>
+          )}
+
+          <div className="mt-2.5 text-[11px] text-botticelli font-mono flex items-center justify-between">
+            <span className="truncate max-w-[200px]">{finding.file || 'Repository Root'}</span>
+            <ChevronRight className="w-3.5 h-3.5 text-textMuted shrink-0" />
+          </div>
+        </div>
+      </div>
+    </li>
+  );
+});
+
 export default function FindingsView() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -332,13 +458,36 @@ export default function FindingsView() {
     () => searchParams?.get('q') || ''
   );
   const debouncedSearchQuery = useDebounceValue(searchQuery, 300);
+  const [totalScanFindings, setTotalScanFindings] = useState<number>(() => {
+    return activeScan?.findingsCount?.total || activeScan?.findings?.length || 0;
+  });
   const fetchSequenceRef = useRef(0);
+  const inFlightParamsRef = useRef<string | null>(null);
   const lastSelectedIdRef = useRef<string | null>(null);
   const hasInitializedSelectionRef = useRef(false);
   const lastSyncedUrlParamRef = useRef<string | null>(null);
   const previousUrlFindingIdRef = useRef<string | null>(
     searchParams?.get('findingId') || searchParams?.get('finding') || null
   );
+
+  // Sync browser back/forward popstate to component filter state
+  useEffect(() => {
+    const handlePopState = () => {
+      if (typeof window === 'undefined') return;
+      const params = new URLSearchParams(window.location.search);
+      setSeverityFilter(params.get('severity') || 'ALL');
+      setCategoryFilter(params.get('category') || 'all');
+      setReadinessFilter(params.get('readiness') || 'ALL');
+      setDiffFilter(params.get('diff') || 'ALL');
+      setStatusFilter(params.get('status') || 'all');
+      setRuleIdFilter(params.get('ruleId') || 'ALL');
+      setFilePathFilter(params.get('file') || '');
+      setSearchQuery(params.get('q') || '');
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   // Dynamic set of available rule IDs from the scan findings
   const availableRuleIds = useMemo(() => {
@@ -399,6 +548,7 @@ export default function FindingsView() {
   } | null>(null);
   const [showUnmarkConfirm, setShowUnmarkConfirm] = useState(false);
   const [showDismissConfirm, setShowDismissConfirm] = useState(false);
+  const [singleFindingToUnmark, setSingleFindingToUnmark] = useState<Finding | null>(null);
   const headerCheckboxRef = useRef<HTMLInputElement>(null);
 
   // AI Finding Suggestions State (P8 Beginner Suggestions)
@@ -852,7 +1002,13 @@ export default function FindingsView() {
       if (debouncedFilePathFilter.trim()) params.set('file', debouncedFilePathFilter.trim());
       if (debouncedSearchQuery.trim()) params.set('search', debouncedSearchQuery.trim());
 
-      let res = await fetch(`/api/findings?${params.toString()}`, {
+      const paramsKey = params.toString();
+      if (inFlightParamsRef.current === paramsKey) {
+        return;
+      }
+      inFlightParamsRef.current = paramsKey;
+
+      let res = await fetch(`/api/findings?${paramsKey}`, {
         cache: 'no-store',
         headers: { 'Cache-Control': 'no-cache' },
       });
@@ -860,6 +1016,7 @@ export default function FindingsView() {
       // Handle 404: if activeScan has in-memory or persisted findings, preserve them instead of wiping state
       if (res.status === 404 && activeScan) {
         if (activeScan.findings && activeScan.findings.length > 0) {
+          setTotalScanFindings(activeScan.findings.length);
           const sorted = [...(activeScan.findings as Finding[])].sort((a, b) => {
             const sevA = SEVERITY_RANK[a.severity?.toUpperCase()] || 0;
             const sevB = SEVERITY_RANK[b.severity?.toUpperCase()] || 0;
@@ -930,6 +1087,10 @@ export default function FindingsView() {
       if (currentSeq !== fetchSequenceRef.current) return;
 
       const loaded: Finding[] = data.findings || [];
+      const totalAvailable = typeof data.total === 'number'
+        ? data.total
+        : (activeScan?.findingsCount?.total || activeScan?.findings?.length || loaded.length);
+      setTotalScanFindings(totalAvailable);
 
       // Sort deterministically: Severity rank descending, then Confidence descending
       const sorted = [...loaded].sort((a, b) => {
@@ -1056,6 +1217,7 @@ export default function FindingsView() {
         setFetchError(err.message || 'Failed to load verified findings');
       }
     } finally {
+      inFlightParamsRef.current = null;
       if (currentSeq === fetchSequenceRef.current) {
         setLoading(false);
       }
@@ -1151,7 +1313,7 @@ export default function FindingsView() {
     }
   }, [urlFindingId, findings, selectedFindingId, setSelectedFindingId, ensureFindingVisible]);
 
-  const handleToggleReview = async (finding: Finding) => {
+  const executeToggleReview = async (finding: Finding) => {
     if (updatingReviewId === finding.id) return;
     const targetId = finding.id;
     const previousFinding = { ...finding };
@@ -1198,7 +1360,7 @@ export default function FindingsView() {
         setReviewMutationError({
           findingId: targetId,
           message: err.error || 'Failed to update review status on server. Reverted state.',
-          retry: () => handleToggleReview(previousFinding),
+          retry: () => executeToggleReview(previousFinding),
         });
         showToast(err.error || 'Failed to update review status; reverted', 'error');
       }
@@ -1211,11 +1373,19 @@ export default function FindingsView() {
       setReviewMutationError({
         findingId: targetId,
         message: 'Network error updating review status. Reverted state.',
-        retry: () => handleToggleReview(previousFinding),
+        retry: () => executeToggleReview(previousFinding),
       });
       showToast('Error connecting to review API; reverted state', 'error');
     } finally {
       setUpdatingReviewId(null);
+    }
+  };
+
+  const handleToggleReview = (finding: Finding) => {
+    if (finding.reviewed) {
+      setSingleFindingToUnmark(finding);
+    } else {
+      executeToggleReview(finding);
     }
   };
 
@@ -1278,47 +1448,89 @@ export default function FindingsView() {
     }
   };
 
-  // Filter findings based on debounced search, ruleId, file path, and status
+  // Single source of truth client filter matching server-side logic
   const filteredFindings = useMemo(() => {
     return findings.filter((f) => {
-      // 1. Text search query
-      if (debouncedSearchQuery) {
-        const q = debouncedSearchQuery.toLowerCase();
+      // 1. Severity filter
+      if (severityFilter && severityFilter !== 'ALL') {
+        const sev = (f.severity || '').toString().trim().toUpperCase();
+        if (sev !== severityFilter.toUpperCase()) return false;
+      }
+
+      // 2. Category filter (supports singular/plural aliases)
+      if (categoryFilter && categoryFilter !== 'all') {
+        const cat = (f.category || '').toString().trim().toLowerCase();
+        const target = categoryFilter.toLowerCase();
+        const matchesCategory =
+          target === 'actions' || target === 'github-actions' || target === 'workflow'
+            ? cat === 'github-actions' || cat === 'actions' || cat === 'workflow'
+            : target === 'dependency' || target === 'dependencies'
+            ? cat === 'dependency' || cat === 'dependencies'
+            : target === 'secret' || target === 'secrets'
+            ? cat === 'secret' || cat === 'secrets'
+            : target === 'health' || target === 'repository-health'
+            ? cat === 'repository-health' || cat === 'health'
+            : cat === target;
+        if (!matchesCategory) return false;
+      }
+
+      // 3. Readiness filter
+      if (readinessFilter && readinessFilter !== 'ALL') {
+        const rawLabel = (f.readiness?.label || '').toString().trim().toLowerCase().replace(/_/g, '-');
+        const targetLabel = readinessFilter.toLowerCase().replace(/_/g, '-');
+        if (rawLabel !== targetLabel) return false;
+      }
+
+      // 4. Diff Status filter
+      if (diffFilter && diffFilter !== 'ALL') {
+        const ds = (f.diffStatus || 'new').toString().trim().toLowerCase().replace(/_/g, '-');
+        const targetDiff = diffFilter.toLowerCase().replace(/_/g, '-');
+        if (ds !== targetDiff) return false;
+      }
+
+      // 5. Text search query
+      if (debouncedSearchQuery && debouncedSearchQuery.trim()) {
+        const q = debouncedSearchQuery.trim().toLowerCase();
+        const title = (f.title || '').toLowerCase();
+        const file = (f.file || '').toLowerCase();
+        const rid = (f.ruleId || '').toLowerCase();
+        const impact = (f.impact || '').toLowerCase();
+        const evidence = (f.evidence || f.redactedEvidence || '').toLowerCase();
+        const fixHint = (f.fixHint || '').toLowerCase();
         const matchesQuery =
-          f.title.toLowerCase().includes(q) ||
-          (f.file && f.file.toLowerCase().includes(q)) ||
-          f.ruleId.toLowerCase().includes(q) ||
-          f.impact.toLowerCase().includes(q) ||
-          (f.evidence && f.evidence.toLowerCase().includes(q));
+          title.includes(q) ||
+          file.includes(q) ||
+          rid.includes(q) ||
+          impact.includes(q) ||
+          evidence.includes(q) ||
+          fixHint.includes(q);
         if (!matchesQuery) return false;
       }
 
-      // 2. Rule ID filter
+      // 6. Rule ID filter
       if (ruleIdFilter && ruleIdFilter !== 'ALL') {
-        const rLower = ruleIdFilter.toLowerCase();
-        const matchesRule =
-          f.ruleId.toLowerCase() === rLower ||
-          f.ruleId.toLowerCase().includes(rLower);
+        const rLower = ruleIdFilter.trim().toLowerCase();
+        const rid = (f.ruleId || '').toLowerCase();
+        const matchesRule = rid === rLower || rid.includes(rLower);
         if (!matchesRule) return false;
       }
 
-      // 3. File path filter (contains)
+      // 7. File path filter (contains)
       if (debouncedFilePathFilter && debouncedFilePathFilter.trim()) {
         const fp = debouncedFilePathFilter.trim().toLowerCase();
-        if (!f.file || !f.file.toLowerCase().includes(fp)) {
-          return false;
-        }
+        const filePath = (f.file || '').toLowerCase();
+        if (!filePath.includes(fp)) return false;
       }
 
-      // 4. Status filter
+      // 8. Status filter
       if (statusFilter && statusFilter !== 'all') {
         if (statusFilter === 'open') {
-          if (f.reviewed || f.status === 'resolved' || f.diffStatus === 'resolved') {
+          if (f.reviewed || f.status === 'resolved' || f.diffStatus === 'resolved' || f.status === 'dismissed') {
             return false;
           }
-        } else if (statusFilter === 'approved') {
+        } else if (statusFilter === 'approved' || statusFilter === 'reviewed') {
           if (!f.reviewed) return false;
-        } else if (statusFilter === 'dismissed') {
+        } else if (statusFilter === 'dismissed' || statusFilter === 'resolved') {
           if (f.status !== 'resolved' && f.diffStatus !== 'resolved' && f.status !== 'dismissed') {
             return false;
           }
@@ -1327,7 +1539,17 @@ export default function FindingsView() {
 
       return true;
     });
-  }, [findings, debouncedSearchQuery, ruleIdFilter, debouncedFilePathFilter, statusFilter]);
+  }, [
+    findings,
+    severityFilter,
+    categoryFilter,
+    readinessFilter,
+    diffFilter,
+    debouncedSearchQuery,
+    ruleIdFilter,
+    debouncedFilePathFilter,
+    statusFilter,
+  ]);
 
   // Selection helpers: Header select-all / partial indeterminate calculation
   const allFilteredSelected = useMemo(() => {
@@ -1458,6 +1680,8 @@ export default function FindingsView() {
         'success'
       );
     }
+    // Refresh filtered query after bulk review updates
+    fetchFindings();
   };
 
   const executeBulkDismiss = async (dismiss: boolean, targetIds?: string[]) => {
@@ -1535,6 +1759,8 @@ export default function FindingsView() {
         'info'
       );
     }
+    // Refresh filtered query after bulk dismiss updates
+    fetchFindings();
   };
 
   // Aggregate count metrics
@@ -1844,13 +2070,13 @@ export default function FindingsView() {
         <div className="pt-3 border-t border-borderDark/60 flex flex-wrap items-center justify-between text-xs text-textMuted gap-2">
           {/* Screen reader live announcement */}
           <div className="sr-only" role="status" aria-live="polite">
-            Showing {filteredFindings.length} of {counts.total} findings
+            Showing {filteredFindings.length} of {Math.max(totalScanFindings, counts.total, filteredFindings.length)} findings
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
             <span>
               Showing <strong className="text-textPrimary">{filteredFindings.length}</strong> of{' '}
-              <strong className="text-textPrimary">{counts.total}</strong> findings
+              <strong className="text-textPrimary">{Math.max(totalScanFindings, counts.total, filteredFindings.length)}</strong> findings
             </span>
             <span className="text-borderDark">•</span>
             <span className="text-emerald-400 font-medium">{counts.goodFirst} Good First</span>
@@ -2061,113 +2287,16 @@ export default function FindingsView() {
                   `${finding.ruleId || 'GEN'}-${finding.file || 'root'}-${finding.lineStart || finding.line || 0}`;
                 const isSelected = selectedFinding?.id === finding.id || selectedFinding?.id === rowId;
                 const isChecked = selectedFindingIds.has(finding.id) || selectedFindingIds.has(rowId);
-                const isCritical = finding.severity?.toUpperCase() === 'CRITICAL';
-                const readiness = finding.readiness;
-                const topReason = Array.isArray(readiness?.reasons) ? readiness.reasons[0] : undefined;
-
-                // P8 Task 1: Selected card = tangerine border; CRITICAL = Rosewood
-                let cardStyle = 'glass-panel hover:border-platinumSilver/30';
-                if (isSelected) {
-                  if (isCritical) {
-                    cardStyle = 'border-rosewood bg-rosewood/25 shadow-md ring-1 ring-rosewood/50';
-                  } else {
-                    cardStyle = 'border-electricTangerine shadow-liquid-glow bg-blackHole/80';
-                  }
-                } else if (isCritical) {
-                  cardStyle = 'border-rosewood/40 bg-rosewood/10 hover:border-rosewood/70';
-                }
-
                 return (
-                  <li role="listitem" key={finding.id || rowId} id={`finding-${finding.id}`}>
-                    <div
-                      className={`w-full p-4 rounded-xl border transition-all ${cardStyle} flex items-start gap-2.5 cursor-pointer touch-manipulation focus:outline-none focus:ring-1 focus:ring-lemonChiffon/60`}
-                      onClick={() => handleSelectFinding(finding)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault();
-                          handleSelectFinding(finding);
-                        }
-                      }}
-                      tabIndex={0}
-                      role="button"
-                      aria-pressed={isSelected}
-                      aria-label={`View details for finding: ${finding.title}`}
-                    >
-                      {/* Individual Row Checkbox with Accessible Touch Target */}
-                      <label
-                        htmlFor={`finding-checkbox-${finding.id}`}
-                        className="min-w-[44px] min-h-[44px] -ml-2 -mt-2 shrink-0 flex items-center justify-center cursor-pointer touch-manipulation"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <input
-                          type="checkbox"
-                          id={`finding-checkbox-${finding.id}`}
-                          name={`select-finding-${finding.id}`}
-                          checked={isChecked}
-                          onChange={() => handleToggleSelectFinding(finding.id)}
-                          aria-label={`Select finding: ${finding.title}`}
-                          className="w-4 h-4 rounded border-borderDark bg-black text-lemonChiffon focus:ring-1 focus:ring-lemonChiffon cursor-pointer touch-manipulation"
-                        />
-                      </label>
-
-                      {/* Card Body Clickable Region */}
-                      <div className="flex-1 min-w-0 text-left">
-                        {/* Top Badges Row: Severity (Text + Icon), Readiness, Diff Status */}
-                        <div className="flex flex-wrap items-center justify-between text-[11px] mb-2 gap-1.5">
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            <SeverityBadge severity={finding.severity} />
-
-                            {finding.urgencyScore !== undefined && (
-                              <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-black border border-borderDark text-textMuted">
-                                Urg: {finding.urgencyScore}
-                              </span>
-                            )}
-
-                            {readiness && (
-                              <span className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider border ${getReadinessBadge(readiness.label)}`}>
-                                Readiness: {readiness.total ?? 0}/100
-                              </span>
-                            )}
-
-                            {finding.diffStatus && finding.diffStatus !== 'unchanged' && (
-                              <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono uppercase font-bold border ${getDiffStatusBadge(finding.diffStatus)}`}>
-                                {finding.diffStatus}
-                              </span>
-                            )}
-
-                            {finding.reviewed && (
-                              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-950/60 text-emerald-300 border border-emerald-600/40 flex items-center gap-1">
-                                <CheckCircle2 className="w-3 h-3" /> Reviewed
-                              </span>
-                            )}
-                          </div>
-
-                          <span className="text-[10px] font-mono text-textMuted">
-                            {typeof finding.confidence === 'number'
-                              ? `${Math.round(finding.confidence * 100)}%`
-                              : finding.confidence || 'HIGH'}{' '}
-                            Conf.
-                          </span>
-                        </div>
-
-                        <h4 className="text-xs font-heading font-semibold text-textPrimary line-clamp-2">
-                          {finding.title}
-                        </h4>
-
-                        {/* Top Readiness reason preview */}
-                        {topReason && (
-                          <p className="mt-1.5 text-[11px] text-textMuted line-clamp-1 italic">
-                            💡 {topReason}
-                          </p>
-                        )}
-
-                        <div className="mt-2.5 text-[11px] text-botticelli font-mono flex items-center justify-between">
-                          <span className="truncate max-w-[200px]">{finding.file || 'Repository Root'}</span>
-                          <ChevronRight className="w-3.5 h-3.5 text-textMuted shrink-0" />
-                        </div>
-                      </div>
-                    </div>
-                  </li>
+                  <FindingRowItem
+                    key={finding.id || rowId}
+                    finding={finding}
+                    rowId={rowId}
+                    isSelected={isSelected}
+                    isChecked={isChecked}
+                    onSelect={handleSelectFinding}
+                    onToggleSelect={handleToggleSelectFinding}
+                  />
                 );
               })}
             </ul>
@@ -2676,7 +2805,7 @@ export default function FindingsView() {
         />
       ) : (
         /* Empty State with distinct honest empty-after-filter state */
-        findings.length > 0 || activeFilterCount > 0 ? (
+        totalScanFindings > 0 || activeFilterCount > 0 ? (
           <EmptyState
             icon={Filter}
             title="No findings match these filters"
@@ -2686,8 +2815,8 @@ export default function FindingsView() {
               onClick: handleResetFilters,
             }}
             secondaryHint={
-              findings.length > 0
-                ? `${findings.length} total finding${findings.length === 1 ? '' : 's'} available in this scan without filters.`
+              totalScanFindings > 0
+                ? `${totalScanFindings} total finding${totalScanFindings === 1 ? '' : 's'} available in this scan without filters.`
                 : 'Try running a new scan or adjusting your search parameters.'
             }
           />
@@ -2828,6 +2957,26 @@ export default function FindingsView() {
           await executeBulkDismiss(true);
         }}
         onCancel={() => setShowDismissConfirm(false)}
+      />
+
+      {/* Destructive Action Confirmation Dialog 3: Single Finding Unmark */}
+      <ConfirmDialog
+        isOpen={Boolean(singleFindingToUnmark)}
+        title="Unmark Finding as Reviewed?"
+        description={`Are you sure you want to remove the reviewed status from "${singleFindingToUnmark?.title || 'this finding'}"?`}
+        consequenceWarning="Removing review verification returns this finding to the unreviewed state in your workspace."
+        confirmLabel="Unmark Review"
+        cancelLabel="Keep Reviewed"
+        isDestructive={true}
+        isBusy={updatingReviewId === singleFindingToUnmark?.id}
+        onConfirm={async () => {
+          if (singleFindingToUnmark) {
+            const target = singleFindingToUnmark;
+            setSingleFindingToUnmark(null);
+            await executeToggleReview(target);
+          }
+        }}
+        onCancel={() => setSingleFindingToUnmark(null)}
       />
 
     </div>
