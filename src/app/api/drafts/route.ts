@@ -25,7 +25,7 @@ export async function POST(req: Request) {
     let existingDraft: any = null;
 
     if (!targetRouteId && draftId) {
-      existingDraft = db.getDraftById(draftId);
+      existingDraft = await db.getDraftById(draftId);
       if (!existingDraft) {
         return apiError('Draft not found', 404, 'GITHUB_NOT_FOUND');
       }
@@ -36,12 +36,12 @@ export async function POST(req: Request) {
       return apiError('routeId or draftId is required', 400, 'AUTH_INVALID_INPUT');
     }
 
-    const route = db.getRouteById(targetRouteId);
+    const route = await db.getRouteById(targetRouteId);
     if (!route) {
       return apiError('Contribution route not found', 404, 'GITHUB_NOT_FOUND');
     }
 
-    const scan = db.getScanById(route.scanId);
+    const scan = await db.getScanById(route.scanId);
     if (!scan) {
       return apiError('Associated scan not found', 404, 'GITHUB_NOT_FOUND');
     }
@@ -51,7 +51,7 @@ export async function POST(req: Request) {
 
     // Server-side evidence loading (do NOT trust client-supplied evidence)
     const targetFindingId = route.findingId || (route.findingIds && route.findingIds[0]) || '';
-    const finding = db.getFindingById(targetFindingId);
+    const finding = await db.getFindingById(targetFindingId);
     if (!finding) {
       return apiError('Finding not found', 404, 'GITHUB_NOT_FOUND');
     }
@@ -94,11 +94,14 @@ export async function POST(req: Request) {
         fallbackReason: draft.fallbackReason,
         updatedAt: new Date().toISOString(),
       });
+      await db.syncDraftToSupabase(draft);
     } else {
       db.saveDraft(draft);
+      await db.syncDraftToSupabase(draft);
       // Update route with draftId
       route.draftId = draft.id;
       db.saveRoute(route);
+      await db.syncRouteToSupabase(route);
     }
 
     db.logActivity({
@@ -141,7 +144,7 @@ export async function GET(req: Request) {
     const draftId = searchParams.get('draftId') || undefined;
 
     if (draftId) {
-      const draft = db.getDraftById(draftId);
+      const draft = await db.getDraftById(draftId);
       if (!draft) {
         return apiError('Draft not found', 404, 'GITHUB_NOT_FOUND');
       }
@@ -153,7 +156,7 @@ export async function GET(req: Request) {
 
     let drafts = db.getDrafts(scanId);
     if (scanId) {
-      const scan = db.getScanById(scanId);
+      const scan = await db.getScanById(scanId);
       if (!scan) {
         return apiError('Scan not found', 404, 'GITHUB_NOT_FOUND');
       }
@@ -205,7 +208,7 @@ export async function PATCH(req: Request) {
       return apiError('draftId is required', 400, 'AUTH_INVALID_INPUT');
     }
 
-    const existing = db.getDraftById(draftId);
+    const existing = await db.getDraftById(draftId);
     if (!existing) {
       return apiError('Draft not found', 404, 'GITHUB_NOT_FOUND');
     }
@@ -262,6 +265,10 @@ export async function PATCH(req: Request) {
       updatedAt: new Date().toISOString(),
     });
 
+    if (updated) {
+      await db.syncDraftToSupabase(updated);
+    }
+
     if (reviewDecision) {
       db.logActivity({
         userId: user.id,
@@ -295,7 +302,7 @@ export async function DELETE(req: Request) {
       return apiError('draftId query parameter is required', 400, 'AUTH_INVALID_INPUT');
     }
 
-    const existing = db.getDraftById(draftId);
+    const existing = await db.getDraftById(draftId);
     if (!existing) {
       return apiError('Draft not found', 404, 'GITHUB_NOT_FOUND');
     }

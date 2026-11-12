@@ -2,6 +2,9 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { db } from '@/lib/db';
 import { buildContributionRoute } from '@/lib/gemini';
+import { calculateContributionReadiness, calculateUrgency } from '@/lib/scanner/readiness';
+import { buildEvidenceChain } from '@/lib/scanner/evidence-chain';
+import { generateSkillChecklist, generateExplanationModes } from '@/lib/scanner/learning';
 import { apiError, requireAuth, validateBody } from '@/lib/api-guard';
 
 export const dynamic = 'force-dynamic';
@@ -41,13 +44,86 @@ export async function POST(req: Request) {
       return apiError('Unauthorized access to scan', 403, 'AUTH_INVALID_CREDENTIALS');
     }
 
-    const route = await buildContributionRoute(finding, scan as any);
+    let route;
+    try {
+      route = await buildContributionRoute(finding, scan as any);
+    } catch (routeErr: any) {
+      console.warn('buildContributionRoute LLM failed, using deterministic route builder:', routeErr?.message || routeErr);
+      const contributionReadiness = calculateContributionReadiness(finding);
+      const { urgencyScore, urgencyLabel } = calculateUrgency(finding);
+      const safeTitle = finding.title || 'Security/Quality Finding';
+      const cleanTestPlan = [
+        `Verify affected configuration or files locally.`,
+        `Run repository test suite to verify no regressions.`
+      ];
+      const cleanAcceptanceCriteria = [
+        `The identified issue is resolved in repository source files.`,
+        `All continuous integration checks complete successfully.`
+      ];
+      route = {
+        id: `rte_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        scanId: scan.id,
+        findingIds: [finding.id],
+        findingId: finding.id,
+        title: `Fix: ${safeTitle}`,
+        whatHappened: finding.impact || safeTitle,
+        whyItMatters: finding.impact || 'Resolving this finding improves repository security and code health.',
+        howToFix: finding.fixHint || 'Apply the recommended changes to resolve this finding.',
+        summary: safeTitle,
+        category: finding.category,
+        difficulty: contributionReadiness.difficulty || 'beginner',
+        estimatedMinutes: contributionReadiness.estimatedMinutes ?? 30,
+        estimatedEffort: '30-45 mins',
+        skills: finding.skills || ['Git', 'Code Review'],
+        learningResources: finding.learningResources || [],
+        contributorLevelImpact: finding.contributorLevelImpact ?? 15,
+        files: [finding.file || 'Repository Root'],
+        suggestedChange: finding.fixHint || 'Apply recommended fix.',
+        testPlan: cleanTestPlan,
+        acceptanceCriteria: cleanAcceptanceCriteria,
+        readiness: {
+          documentationClarity: 20,
+          testAvailability: 20,
+          ciAutomation: 20,
+          dependencyFreshness: 20,
+          securityGovernance: 20,
+          securityImpact: 20,
+          evidenceConfidence: 20,
+          difficultyPenalty: 0,
+          total: contributionReadiness.total,
+        },
+        contributionReadiness,
+        urgencyScore,
+        urgencyLabel,
+        readinessScore: contributionReadiness.total,
+        status: 'not-started' as const,
+        generatedBy: 'deterministic' as const,
+        evidenceChain: buildEvidenceChain(finding, {
+          explanationGeneratedBy: 'deterministic',
+          repoName: scan.repoName,
+        }),
+        createdAt: new Date().toISOString(),
+        learningChecklist: generateSkillChecklist(finding, {
+          skills: finding.skills || ['Git', 'Code Review'],
+          difficulty: contributionReadiness.difficulty || 'beginner',
+          category: finding.category,
+        } as any),
+        explanationModes: generateExplanationModes(finding, {
+          whatHappened: finding.impact || safeTitle,
+          whyItMatters: finding.impact || 'Resolving this finding improves repository security.',
+          howToFix: finding.fixHint || 'Apply recommended fix.',
+        } as any),
+      };
+    }
+
     db.saveRoute(route);
+    await db.syncRouteToSupabase(route);
 
     // Update finding reference
     finding.routeCreated = true;
     finding.routeId = route.id;
     db.updateFinding(finding);
+    await db.syncFindingsToSupabase([finding]);
 
     db.logActivity({
       userId: user.id,
@@ -76,9 +152,9 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const scanId = searchParams.get('scanId') || undefined;
 
-    let routes = db.getRoutes(scanId);
+    let routes = scanId ? await db.getRoutesByScanId(scanId) : db.getRoutes();
     if (scanId) {
-      const scan = db.getScanById(scanId);
+      const scan = await db.getScanById(scanId);
       if (!scan) {
         return apiError('Scan not found', 404, 'GITHUB_NOT_FOUND');
       }
@@ -88,7 +164,7 @@ export async function GET(req: Request) {
 
       // Lazy on-demand route generation: if scan has no routes yet, generate concurrently with timeout
       if (routes.length === 0) {
-        const findings = db.getFindings(scanId);
+        const findings = await db.getFindingsByScanId(scanId);
         const eligibleFindings = findings.filter(
           (f) =>
             f.category !== 'secret' &&
@@ -109,15 +185,17 @@ export async function GET(req: Request) {
             try {
               const route = await buildContributionRoute(f, scan as any);
               db.saveRoute(route);
+              await db.syncRouteToSupabase(route);
               f.routeCreated = true;
               f.routeId = route.id;
               db.updateFinding(f);
+              await db.syncFindingsToSupabase([f]);
             } catch (routeErr) {
               console.warn(`Lazy route generation skipped for finding ${f.id}:`, routeErr);
             }
           })
         );
-        routes = db.getRoutes(scanId);
+        routes = await db.getRoutesByScanId(scanId);
       }
     } else {
       const userScanIds = db.getScans(user.id).map((s) => s.id);
@@ -153,12 +231,12 @@ export async function PATCH(req: Request) {
       return apiError('routeId is required', 400, 'AUTH_INVALID_INPUT');
     }
 
-    const route = db.getRouteById(routeId);
+    const route = await db.getRouteById(routeId);
     if (!route) {
       return apiError('Route not found', 404, 'GITHUB_NOT_FOUND');
     }
 
-    const scan = db.getScanById(route.scanId);
+    const scan = await db.getScanById(route.scanId);
     if (!scan) {
       return apiError('Associated scan not found', 404, 'GITHUB_NOT_FOUND');
     }
@@ -199,12 +277,13 @@ export async function PATCH(req: Request) {
     }
 
     if (skillId && completed !== undefined && route.learningChecklist) {
-      route.learningChecklist = route.learningChecklist.map((item) =>
+      route.learningChecklist = route.learningChecklist.map((item: any) =>
         item.id === skillId ? { ...item, completed: Boolean(completed) } : item
       );
     }
 
     db.saveRoute(route);
+    await db.syncRouteToSupabase(route);
 
     db.logActivity({
       userId: user.id,

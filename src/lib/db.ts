@@ -26,6 +26,37 @@ export class PersistenceError extends Error {
   }
 }
 
+export type DurableLookup<T> = Promise<T | undefined> & (T | undefined);
+
+function makeThenable<T extends object>(obj: T): T & Promise<T> {
+  if (!obj || typeof obj !== 'object') return obj as any;
+  const promise = Promise.resolve(obj);
+  return new Proxy(promise, {
+    get(target, prop, receiver) {
+      if (prop in target) {
+        const val = Reflect.get(target, prop, receiver);
+        if (typeof val === 'function') {
+          return val.bind(target);
+        }
+        return val;
+      }
+      return (obj as any)[prop];
+    },
+    has(target, prop) {
+      return prop in target || prop in obj;
+    },
+    ownKeys() {
+      return Reflect.ownKeys(obj);
+    },
+    getOwnPropertyDescriptor(target, prop) {
+      return (
+        Reflect.getOwnPropertyDescriptor(obj, prop) ||
+        Reflect.getOwnPropertyDescriptor(target, prop)
+      );
+    },
+  }) as T & Promise<T>;
+}
+
 interface DatabaseSchema {
   users: User[];
   scans: ScanSummary[];
@@ -606,8 +637,8 @@ export const db = {
     if (userId) return scans.filter((s) => s.userId === userId || s.owner === userId);
     return scans;
   },
-  getScanById: (id: string): ScanSummary | undefined => {
-    if (!id) return undefined;
+  getScanById: (id: string): DurableLookup<ScanSummary> => {
+    if (!id) return undefined as any;
     const cleanId = id.trim();
     let decoded = cleanId;
     try {
@@ -618,11 +649,11 @@ export const db = {
     const candidateIds = Array.from(new Set([cleanId, decoded].filter(Boolean)));
     const local = ensureDb().scans.find((s) => candidateIds.includes(s.id));
     if (local) {
-      return local;
+      return makeThenable(local);
     }
 
     if (!isSupabaseConfigured()) {
-      return undefined;
+      return undefined as any;
     }
 
     const fetcher = async (): Promise<ScanSummary | undefined> => {
@@ -646,7 +677,7 @@ export const db = {
             dbData.scans.unshift(scan);
           }
           persistDb();
-          return scan;
+          return makeThenable(scan);
         }
       } catch (err) {
         console.warn('Supabase fetch scan error:', err);
@@ -654,7 +685,7 @@ export const db = {
       return undefined;
     };
 
-    return fetcher() as unknown as ScanSummary;
+    return fetcher() as any;
   },
   hydrateFromSupabase: async (userId?: string, scanId?: string): Promise<void> => {
     if (!isSupabaseConfigured()) return;
@@ -851,8 +882,8 @@ export const db = {
     }
     return findings;
   },
-  getFindingById: (id: string): Finding | undefined => {
-    if (!id || id.startsWith('mem-')) return undefined;
+  getFindingById: (id: string): DurableLookup<Finding> => {
+    if (!id || id.startsWith('mem-')) return undefined as any;
     const cleanId = id.trim();
     let decoded = cleanId;
     try {
@@ -869,11 +900,11 @@ export const db = {
     );
 
     if (local) {
-      return local;
+      return makeThenable(local);
     }
 
     if (!isSupabaseConfigured()) {
-      return undefined;
+      return undefined as any;
     }
 
     const fetcher = async (): Promise<Finding | undefined> => {
@@ -898,7 +929,7 @@ export const db = {
             dbData.findings.push(finding);
           }
           persistDb();
-          return finding;
+          return makeThenable(finding);
         }
       } catch (err) {
         console.warn('Supabase fetch finding error:', err);
@@ -906,7 +937,7 @@ export const db = {
       return undefined;
     };
 
-    return fetcher() as unknown as Finding;
+    return fetcher() as any;
   },
   saveFindings: (newFindings: Finding[]): Finding[] => {
     const data = ensureDb();
@@ -945,6 +976,32 @@ export const db = {
     }
 
     return validFindings;
+  },
+  syncScanToSupabase: async (scan: ScanSummary): Promise<void> => {
+    if (!isSupabaseConfigured() || !scan) return;
+    try {
+      const client = getSupabaseServerClient();
+      if (!client) return;
+      const payload = mapScanToSupabase(scan);
+      const { error } = await client.from('scans').upsert(payload, { onConflict: 'id' });
+      if (error) console.warn('Supabase syncScanToSupabase warning:', error.message);
+    } catch (err) {
+      console.warn('Supabase syncScanToSupabase error:', err);
+    }
+  },
+  syncFindingsToSupabase: async (findings: Finding[]): Promise<void> => {
+    if (!isSupabaseConfigured() || findings.length === 0) return;
+    try {
+      const client = getSupabaseServerClient();
+      if (!client) return;
+      const valid = findings.filter((f) => f && f.id && !f.id.startsWith('mem-'));
+      if (valid.length === 0) return;
+      const payload = valid.map(mapFindingToSupabase);
+      const { error } = await client.from('findings').upsert(payload, { onConflict: 'id' });
+      if (error) console.warn('Supabase syncFindingsToSupabase warning:', error.message);
+    } catch (err) {
+      console.warn('Supabase syncFindingsToSupabase error:', err);
+    }
   },
   deleteFindingsByScanId: (scanId: string): number => {
     const data = ensureDb();
@@ -1189,13 +1246,37 @@ export const db = {
     }
     return routes;
   },
-  getRouteById: (id: string): ContributionRoute | undefined => {
-    if (!id) return undefined;
+  getRoutesByScanId: async (scanId: string): Promise<ContributionRoute[]> => {
+    let routes = ensureDb().routes.filter((r) => r.scanId === scanId);
+    if (routes.length === 0 && isSupabaseConfigured()) {
+      try {
+        const client = getSupabaseServerClient();
+        if (client) {
+          const { data, error } = await client.from('routes').select('*').eq('scan_id', scanId);
+          if (!error && data && data.length > 0) {
+            const dbData = ensureDb();
+            for (const r of data) {
+              if (!dbData.routes.some((x) => x.id === r.id)) {
+                dbData.routes.push(mapSupabaseToRoute(r));
+              }
+            }
+            persistDb();
+            routes = ensureDb().routes.filter((r) => r.scanId === scanId);
+          }
+        }
+      } catch (err) {
+        console.debug('Supabase fetch routes warning:', err);
+      }
+    }
+    return routes;
+  },
+  getRouteById: (id: string): DurableLookup<ContributionRoute> => {
+    if (!id) return undefined as any;
     const cleanId = id.trim();
     const local = ensureDb().routes.find((r) => r.id === cleanId);
-    if (local) return local;
+    if (local) return makeThenable(local);
 
-    if (!isSupabaseConfigured()) return undefined;
+    if (!isSupabaseConfigured()) return undefined as any;
 
     const fetcher = async (): Promise<ContributionRoute | undefined> => {
       try {
@@ -1212,7 +1293,7 @@ export const db = {
             dbData.routes.push(route);
           }
           persistDb();
-          return route;
+          return makeThenable(route);
         }
       } catch (err) {
         console.debug('Supabase fetch route by id warning:', err);
@@ -1220,7 +1301,7 @@ export const db = {
       return undefined;
     };
 
-    return fetcher() as unknown as ContributionRoute;
+    return fetcher() as any;
   },
   saveRoute: (route: ContributionRoute): ContributionRoute => {
     const data = ensureDb();
@@ -1304,6 +1385,17 @@ export const db = {
     }
     return undefined;
   },
+  syncRouteToSupabase: async (route: ContributionRoute): Promise<void> => {
+    if (!isSupabaseConfigured()) return;
+    try {
+      const client = getSupabaseServerClient();
+      if (!client) return;
+      const payload = mapRouteToSupabase(route);
+      await client.from('routes').upsert(payload, { onConflict: 'id' });
+    } catch (err) {
+      console.debug('Supabase syncRoute error:', err);
+    }
+  },
 
   // Issue Drafts (Maintainer-Ready Markdown Drafts)
   getDrafts: (scanId?: string): IssueDraft[] => {
@@ -1335,13 +1427,13 @@ export const db = {
     }
     return drafts;
   },
-  getDraftById: (id: string): IssueDraft | undefined => {
-    if (!id) return undefined;
+  getDraftById: (id: string): DurableLookup<IssueDraft> => {
+    if (!id) return undefined as any;
     const cleanId = id.trim();
     const local = ensureDb().drafts.find((d) => d.id === cleanId);
-    if (local) return local;
+    if (local) return makeThenable(local);
 
-    if (!isSupabaseConfigured()) return undefined;
+    if (!isSupabaseConfigured()) return undefined as any;
 
     const fetcher = async (): Promise<IssueDraft | undefined> => {
       try {
@@ -1358,7 +1450,7 @@ export const db = {
             dbData.drafts.push(draft);
           }
           persistDb();
-          return draft;
+          return makeThenable(draft);
         }
       } catch (err) {
         console.debug('Supabase fetch draft by id warning:', err);
@@ -1366,7 +1458,7 @@ export const db = {
       return undefined;
     };
 
-    return fetcher() as unknown as IssueDraft;
+    return fetcher() as any;
   },
   saveDraft: (draft: IssueDraft): IssueDraft => {
     const data = ensureDb();
@@ -1449,6 +1541,17 @@ export const db = {
       return true;
     }
     return false;
+  },
+  syncDraftToSupabase: async (draft: IssueDraft): Promise<void> => {
+    if (!isSupabaseConfigured()) return;
+    try {
+      const client = getSupabaseServerClient();
+      if (!client) return;
+      const payload = mapDraftToSupabase(draft);
+      await client.from('issue_drafts').upsert(payload, { onConflict: 'id' });
+    } catch (err) {
+      console.debug('Supabase syncDraft error:', err);
+    }
   },
 
   // Technologies

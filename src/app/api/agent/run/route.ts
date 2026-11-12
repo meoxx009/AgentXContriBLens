@@ -128,7 +128,7 @@ export async function POST(req: Request) {
 
     // 4. Ownership verification if scanId provided
     if (scanId) {
-      const scan = db.getScanById(scanId);
+      const scan = await db.getScanById(scanId);
       if (scan && scan.userId && scan.userId !== user.id) {
         return NextResponse.json(
           {
@@ -143,9 +143,9 @@ export async function POST(req: Request) {
 
     // 5. Ownership verification if findingId provided
     if (findingId) {
-      const finding = db.getFindingById(findingId);
+      const finding = await db.getFindingById(findingId);
       if (finding && finding.scanId) {
-        const scan = db.getScanById(finding.scanId);
+        const scan = await db.getScanById(finding.scanId);
         if (scan && scan.userId && scan.userId !== user.id) {
           return NextResponse.json(
             {

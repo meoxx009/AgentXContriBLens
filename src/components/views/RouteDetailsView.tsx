@@ -287,7 +287,7 @@ export default function RouteDetailPage({
   };
 
   const handleDownloadPack = async () => {
-    if (!route) return;
+    if (!route || downloadingPack) return;
     setDownloadingPack(true);
     try {
       const res = await fetch(`/api/routes/${route.id}/pack`);
@@ -303,8 +303,12 @@ export default function RouteDetailPage({
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
         showToast('Contribution pack downloaded as .md file!', 'success');
+      } else if (res.status === 401) {
+        showToast('Session expired — please sign in again', 'error');
+      } else if (res.status === 404) {
+        showToast('This contribution route is from a previous scan — rescan the repository to refresh it', 'info');
       } else {
-        const err = await res.json();
+        const err = await res.json().catch(() => ({}));
         showToast(err.error || 'Failed to download contribution pack', 'error');
       }
     } catch {
@@ -315,7 +319,7 @@ export default function RouteDetailPage({
   };
 
   const handleGenerateDraft = async () => {
-    if (!route) return;
+    if (!route || generatingDraft) return;
     setGeneratingDraft(true);
     try {
       const res = await fetch('/api/drafts', {
@@ -323,10 +327,16 @@ export default function RouteDetailPage({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ routeId: route.id }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (res.ok) {
         showToast('Maintainer issue draft generated successfully!', 'success');
         router.push(`/app/issue-drafts?draftId=${data.draft.id}`);
+      } else if (res.status === 401) {
+        showToast('Session expired — please sign in again', 'error');
+      } else if (res.status === 403) {
+        showToast('Responsible disclosure protocol: secrets and critical findings must not be shared publicly.', 'info');
+      } else if (res.status === 404) {
+        showToast('This contribution route is from a previous scan — rescan the repository to refresh it', 'info');
       } else {
         showToast(data.error || 'Failed to generate draft', 'error');
       }

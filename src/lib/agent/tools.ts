@@ -38,7 +38,7 @@ import { queryOSVBatch } from '../scanner/osv.ts';
 import { explainFinding, createIssueDraft, buildContributionRoute } from '../gemini.ts';
 import { redactSecrets } from '../redaction.ts';
 import { db } from '../db.ts';
-import type { Finding, FindingEvidence, ScanSummary, TechStack } from '../../types.ts';
+import type { Finding, FindingEvidence, ScanSummary, TechStack, ContributionRoute } from '../../types.ts';
 import {
   AgentToolName,
   AgentToolNameSchema,
@@ -725,7 +725,7 @@ export async function executeDraftIssue(
   const scanSummary: ScanSummary = (finding.scanId ? db.getScanById(finding.scanId) : undefined) || createMockScanSummary(context, input.repoName);
 
   try {
-    let route = input.routeId ? db.getRouteById(input.routeId) : undefined;
+    let route: ContributionRoute | undefined = input.routeId ? (await db.getRouteById(input.routeId)) : undefined;
     if (!route) {
       route = await buildContributionRoute(finding, scanSummary);
     }

@@ -182,6 +182,14 @@ export async function POST(req: Request) {
     result.scan.scope = scope;
     db.saveScan(result.scan);
 
+    // Ensure durable cloud persistence if Supabase configured
+    if (result.scan) {
+      await db.syncScanToSupabase(result.scan);
+    }
+    if (result.findings?.length) {
+      await db.syncFindingsToSupabase(result.findings);
+    }
+
     const findingsCount = result.scan.findingsCount;
 
     return NextResponse.json({

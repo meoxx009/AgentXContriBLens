@@ -55,7 +55,8 @@ export async function GET(
     }
 
     // Look up route if exists
-    const route = db.getRoutes(scan.id).find((r) => r.findingId === finding.id || (r.findingIds && r.findingIds.includes(finding.id)));
+    const routes = await db.getRoutesByScanId(scan.id);
+    const route = routes.find((r) => r.findingId === finding.id || (r.findingIds && r.findingIds.includes(finding.id)));
 
     return NextResponse.json({
       ok: true,
@@ -136,6 +137,7 @@ export async function PATCH(
     };
 
     db.updateFinding(updatedFinding);
+    await db.syncFindingsToSupabase([updatedFinding]);
 
     let activityDesc = isReviewed
       ? `Reviewed finding: ${finding.title}`

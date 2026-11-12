@@ -2,7 +2,7 @@
 
 import React, { use, useState, useEffect, useMemo, useCallback } from 'react';
 import Link from 'next/link';
-import { useRouter, useParams } from 'next/navigation';
+import { useRouter, useParams, useSearchParams } from 'next/navigation';
 import { useApp } from '@/components/AppContext';
 import {
   Shield,
@@ -232,7 +232,8 @@ export default function FindingDetailPage({
   const findingId =
     unwrappedParams?.findingId || (routerParams?.findingId as string) || '';
   const router = useRouter();
-  const { showToast } = useApp();
+  const searchParams = useSearchParams();
+  const { showToast, activeScan, openAuthModal, setSessionExpired } = useApp();
 
   const [finding, setFinding] = useState<Finding | null>(null);
   const [loading, setLoading] = useState(true);
@@ -247,10 +248,21 @@ export default function FindingDetailPage({
   const [showDismissConfirm, setShowDismissConfirm] = useState(false);
   const [showUnmarkConfirm, setShowUnmarkConfirm] = useState(false);
   const [explanationMode, setExplanationMode] = useState<ExplanationMode>('beginner');
+  const [staleFinding, setStaleFinding] = useState(false);
   const [reviewError, setReviewError] = useState<{
     message: string;
     retry: () => void;
   } | null>(null);
+
+  const repoUrl =
+    searchParams?.get('repo') ||
+    searchParams?.get('repoUrl') ||
+    activeScan?.repoUrl ||
+    activeScan?.repositoryUrl ||
+    '';
+  const rescanHref = repoUrl
+    ? `/app/scan?repo=${encodeURIComponent(repoUrl)}`
+    : '/app/scan';
 
   const executeToggleReview = async () => {
     if (!finding || updatingReview) return;
@@ -274,6 +286,18 @@ export default function FindingDetailPage({
           setFinding(data.finding);
         }
         showToast(nextReviewed ? 'Marked finding as reviewed' : 'Unmarked review', 'info');
+      } else if (res.status === 401) {
+        setFinding(previousFinding);
+        setSessionExpired?.(true);
+        openAuthModal?.({ initialMode: 'login' });
+        showToast('Session expired — please sign in again', 'error');
+      } else if (res.status === 403) {
+        setFinding(previousFinding);
+        showToast('Responsible disclosure protocol: you do not have permission to modify this finding', 'info');
+      } else if (res.status === 404) {
+        setFinding(previousFinding);
+        setStaleFinding(true);
+        showToast('This finding is from a previous scan — rescan the repository to refresh it', 'info');
       } else {
         const err = await res.json().catch(() => ({}));
         // Truthful rollback
@@ -327,6 +351,18 @@ export default function FindingDetailPage({
           setFinding(data.finding);
         }
         showToast(dismiss ? 'Finding dismissed from active reports' : 'Finding restored to open', 'info');
+      } else if (res.status === 401) {
+        setFinding(previousFinding);
+        setSessionExpired?.(true);
+        openAuthModal?.({ initialMode: 'login' });
+        showToast('Session expired — please sign in again', 'error');
+      } else if (res.status === 403) {
+        setFinding(previousFinding);
+        showToast('Responsible disclosure protocol: you do not have permission to modify this finding', 'info');
+      } else if (res.status === 404) {
+        setFinding(previousFinding);
+        setStaleFinding(true);
+        showToast('This finding is from a previous scan — rescan the repository to refresh it', 'info');
       } else {
         setFinding(previousFinding);
         showToast('Failed to update finding status', 'error');
@@ -347,6 +383,7 @@ export default function FindingDetailPage({
     setLoading(true);
     setFetchError(null);
     setErrorType(null);
+    setStaleFinding(false);
 
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
       setErrorType('network_offline');
@@ -361,6 +398,7 @@ export default function FindingDetailPage({
         const directData = await directRes.json();
         if (directData.finding) {
           setFinding(directData.finding);
+          setStaleFinding(false);
           return;
         }
       } else if (directRes.status === 401) {
@@ -369,7 +407,7 @@ export default function FindingDetailPage({
         return;
       } else if (directRes.status === 403) {
         setErrorType('forbidden');
-        setFetchError('You do not have authorization to view this finding.');
+        setFetchError('Responsible disclosure protocol: you do not have authorization to view this finding.');
         return;
       } else if (directRes.status === 404) {
         // Fallback to checking the active list before marking not found
@@ -382,6 +420,7 @@ export default function FindingDetailPage({
         const matched = allFindings.find((f) => f.id === findingId);
         if (matched) {
           setFinding(matched);
+          setStaleFinding(false);
           return;
         }
       } else if (res.status === 401) {
@@ -390,13 +429,14 @@ export default function FindingDetailPage({
         return;
       } else if (res.status === 403) {
         setErrorType('forbidden');
-        setFetchError('You do not have authorization to view this finding.');
+        setFetchError('Responsible disclosure protocol: you do not have authorization to view this finding.');
         return;
       }
 
       // If both calls succeeded or 404'd without finding the record:
       setErrorType('not_found');
-      setFetchError('This finding is from an old scan — rescan the repository to refresh findings');
+      setStaleFinding(true);
+      setFetchError('This finding is from a previous scan — rescan the repository to refresh it');
     } catch (err: any) {
       console.error('Failed to load finding details:', err);
       if (typeof navigator !== 'undefined' && !navigator.onLine) {
@@ -478,22 +518,30 @@ export default function FindingDetailPage({
       ? finding.skills
       : ['Git', 'GitHub'];
 
-  const handleCopyEvidence = () => {
+  const handleCopyEvidence = async () => {
     const textToCopy = finding?.redactedEvidence || finding?.evidence || '';
     if (!textToCopy) return;
-    navigator.clipboard.writeText(textToCopy);
-    setCopied(true);
-    showToast('Evidence snippet copied to clipboard', 'info');
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      await navigator.clipboard.writeText(textToCopy);
+      setCopied(true);
+      showToast('Evidence snippet copied to clipboard', 'info');
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      showToast('Unable to copy evidence snippet to clipboard', 'error');
+    }
   };
 
-  const handleCopyHash = () => {
+  const handleCopyHash = async () => {
     const hashToCopy = finding?.evidenceHash || finding?.evidenceChain?.evidenceHash || '';
     if (!hashToCopy) return;
-    navigator.clipboard.writeText(hashToCopy);
-    setCopiedHash(true);
-    showToast('Evidence SHA-256 hash copied to clipboard', 'info');
-    setTimeout(() => setCopiedHash(false), 2000);
+    try {
+      await navigator.clipboard.writeText(hashToCopy);
+      setCopiedHash(true);
+      showToast('Evidence SHA-256 hash copied to clipboard', 'info');
+      setTimeout(() => setCopiedHash(false), 2000);
+    } catch {
+      showToast('Unable to copy SHA-256 hash to clipboard', 'error');
+    }
   };
 
   const handleExplain = async () => {
@@ -509,15 +557,22 @@ export default function FindingDetailPage({
         const data = await res.json();
         setExplanation(data.explanation);
         showToast('Grounded explanation generated', 'success');
+      } else if (res.status === 401) {
+        setSessionExpired?.(true);
+        openAuthModal?.({ initialMode: 'login' });
+        showToast('Session expired — please sign in again', 'error');
       } else if (res.status === 403) {
         const err = await res.json().catch(() => ({}));
-        showToast(err.error || 'Secret finding: disclosure guard blocked explanation.', 'info');
+        showToast(err.error || 'Responsible disclosure protocol: secrets and critical findings must not be shared publicly.', 'info');
+      } else if (res.status === 404) {
+        setStaleFinding(true);
+        showToast('This finding is from a previous scan — rescan the repository to refresh it', 'info');
       } else {
         const err = await res.json().catch(() => ({}));
         showToast(err.error || 'Failed to generate explanation', 'error');
       }
     } catch {
-      showToast('Error requesting AI explanation', 'error');
+      showToast('Network error while requesting explanation', 'error');
     } finally {
       setExplaining(false);
     }
@@ -534,13 +589,23 @@ export default function FindingDetailPage({
       });
       if (res.ok) {
         const data = await res.json();
-        showToast('Contribution route generated', 'success');
+        showToast('Contribution route created!', 'success');
         router.push(`/app/contributions?routeId=${data.route.id}`);
+      } else if (res.status === 401) {
+        setSessionExpired?.(true);
+        openAuthModal?.({ initialMode: 'login' });
+        showToast('Session expired — please sign in again', 'error');
+      } else if (res.status === 403) {
+        showToast('Responsible disclosure protocol: secrets and critical findings must not be shared publicly.', 'info');
+      } else if (res.status === 404) {
+        setStaleFinding(true);
+        showToast('This finding is from a previous scan — rescan the repository to refresh it', 'info');
       } else {
-        showToast('Failed to create route', 'error');
+        const err = await res.json().catch(() => ({}));
+        showToast(err.error || 'Failed to create contribution route', 'error');
       }
     } catch {
-      showToast('Error connecting to route planner', 'error');
+      showToast('Network error while creating route', 'error');
     } finally {
       setCreatingRoute(false);
     }
@@ -592,10 +657,10 @@ export default function FindingDetailPage({
           <EmptyState
             icon={HelpCircle}
             title="Finding Not Found"
-            description="This finding is from an old scan — rescan the repository to refresh findings"
+            description="This finding is from a previous scan — rescan the repository to refresh it"
             action={{
               label: 'Rescan Repository',
-              href: '/app/scan',
+              href: rescanHref,
               icon: Sparkles,
             }}
             secondaryHint={
@@ -635,6 +700,28 @@ export default function FindingDetailPage({
             Back to Findings
           </Link>
         </div>
+
+        {/* Stale Finding Alert Banner */}
+        {staleFinding && (
+          <div
+            data-testid="stale-finding-banner"
+            className="p-4 sm:p-5 rounded-2xl bg-coffeeBean/40 border border-lemonChiffon/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs shadow-glass-card"
+          >
+            <div className="flex items-center gap-2.5 text-lemonChiffon">
+              <AlertTriangle className="w-5 h-5 text-electricTangerine shrink-0" />
+              <span className="text-sustainableLinen">
+                This finding is from a previous scan — rescan the repository to refresh it.
+              </span>
+            </div>
+            <Link
+              href={rescanHref}
+              className="min-h-[44px] px-4 py-2 rounded-full bg-lemonChiffon hover:bg-sustainableLinen text-black font-semibold text-xs transition-colors flex items-center justify-center gap-1.5 self-start sm:self-auto shrink-0 shadow-sm"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Rescan Repository</span>
+            </Link>
+          </div>
+        )}
 
         {/* F5 Task 3: "Recommended for you" Strip */}
         {recommendation && (
@@ -706,7 +793,7 @@ export default function FindingDetailPage({
                   disabled={creatingRoute}
                   className="min-h-[44px] px-4 py-1.5 rounded-full bg-electricTangerine hover:bg-electricTangerine-hover text-white text-xs font-bold transition-all shadow-glow-tangerine inline-flex items-center justify-center gap-1.5 press-spring touch-manipulation self-start sm:self-auto"
                 >
-                  <Compass className="w-3.5 h-3.5" />
+                  {creatingRoute ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Compass className="w-3.5 h-3.5" />}
                   <span>{creatingRoute ? 'Planning Route...' : 'Start Contribution Route'}</span>
                 </button>
               )}
@@ -1197,9 +1284,9 @@ export default function FindingDetailPage({
           </div>
 
           <EngineBadge
-            engine={explanation?.generatedBy || 'deterministic'}
-            fallback={explanation?.fallback ?? true}
-            fallbackReason={explanation?.fallbackReason}
+            engine={finding?.explanationModes ? (explanation?.generatedBy || 'gemma') : 'deterministic'}
+            fallback={!finding?.explanationModes}
+            fallbackReason={!finding?.explanationModes ? 'Deterministic perspective rules — verified evidence' : undefined}
           />
 
           <div className="p-5 rounded-xl bg-black/60 border border-borderDark space-y-2 text-xs">
@@ -1229,14 +1316,23 @@ export default function FindingDetailPage({
                 <span className="text-xs text-textMuted">Evidence-grounded assistance (never mutates severity)</span>
               </div>
             </div>
-            {!explanation && (
+            {!explanation ? (
               <button
                 onClick={handleExplain}
                 disabled={explaining}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-lemonChiffon text-black font-semibold text-xs hover:opacity-90 disabled:opacity-50 transition-opacity shrink-0"
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-lemonChiffon text-black font-semibold text-xs hover:opacity-90 disabled:opacity-50 transition-opacity shrink-0 press-spring touch-manipulation"
               >
                 {explaining ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-                {explaining ? 'Grounding...' : 'Explain with Gemma 4'}
+                <span>{explaining ? 'Grounding...' : 'Explain with Gemma 4'}</span>
+              </button>
+            ) : (
+              <button
+                onClick={handleExplain}
+                disabled={explaining}
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-white/5 hover:bg-white/10 text-sustainableLinen border border-borderDark text-xs font-semibold transition-all disabled:opacity-50 shrink-0 press-spring touch-manipulation"
+              >
+                {explaining ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5 text-lemonChiffon" />}
+                <span>{explaining ? 'Grounding...' : 'Re-explain with Gemma 4'}</span>
               </button>
             )}
           </div>
@@ -1246,7 +1342,7 @@ export default function FindingDetailPage({
               <div className="p-5 rounded-xl bg-black/60 border border-lemonChiffon/20 space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-textMuted">
                   <EngineBadge
-                    engine={explanation.generatedBy || 'gemma'}
+                    engine={explanation.generatedBy || (explanation.fallback ? 'deterministic' : 'gemma')}
                     fallback={explanation.fallback}
                     fallbackReason={explanation.fallbackReason}
                   />

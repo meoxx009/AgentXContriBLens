@@ -549,32 +549,60 @@ export default function FindingsView() {
   const [showUnmarkConfirm, setShowUnmarkConfirm] = useState(false);
   const [showDismissConfirm, setShowDismissConfirm] = useState(false);
   const [singleFindingToUnmark, setSingleFindingToUnmark] = useState<Finding | null>(null);
+  const [singleFindingToDismiss, setSingleFindingToDismiss] = useState<Finding | null>(null);
   const headerCheckboxRef = useRef<HTMLInputElement>(null);
 
   // AI Finding Suggestions State (P8 Beginner Suggestions)
+  const [showSuggestions, setShowSuggestions] = useState(false);
   const [suggestions, setSuggestions] = useState<AIFindingSuggestion[]>([]);
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
   const [suggestionsError, setSuggestionsError] = useState<string | null>(null);
   const [suggestionsTotalFindings, setSuggestionsTotalFindings] = useState(0);
   const [suggestionsIsPartial, setSuggestionsIsPartial] = useState(false);
   const suggestionsSeqRef = useRef(0);
+  const isSuggestionsMountedRef = useRef(true);
+  const suggestionsAbortControllerRef = useRef<AbortController | null>(null);
+
+  // Requirement 2 & 3: Clean default on mount/return and abort on unmount
+  useEffect(() => {
+    isSuggestionsMountedRef.current = true;
+    setShowSuggestions(false);
+    setSuggestionsError(null);
+
+    return () => {
+      isSuggestionsMountedRef.current = false;
+      if (suggestionsAbortControllerRef.current) {
+        suggestionsAbortControllerRef.current.abort();
+      }
+    };
+  }, []);
 
   const fetchSuggestions = useCallback(async (scanId: string) => {
+    if (suggestionsAbortControllerRef.current) {
+      suggestionsAbortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    suggestionsAbortControllerRef.current = controller;
+
     const currentSeq = ++suggestionsSeqRef.current;
-    setSuggestionsLoading(true);
-    setSuggestionsError(null);
+    if (isSuggestionsMountedRef.current) {
+      setSuggestionsLoading(true);
+      setSuggestionsError(null);
+    }
 
     try {
       if (typeof navigator !== 'undefined' && !navigator.onLine) {
-        if (currentSeq !== suggestionsSeqRef.current) return;
+        if (!isSuggestionsMountedRef.current || currentSeq !== suggestionsSeqRef.current) return;
         setSuggestionsError('You appear to be offline.');
         setSuggestions([]);
         setSuggestionsLoading(false);
         return;
       }
 
-      const res = await fetch(`/api/findings/suggestions?scanId=${encodeURIComponent(scanId)}`);
-      if (currentSeq !== suggestionsSeqRef.current) return;
+      const res = await fetch(`/api/findings/suggestions?scanId=${encodeURIComponent(scanId)}`, {
+        signal: controller.signal,
+      });
+      if (!isSuggestionsMountedRef.current || currentSeq !== suggestionsSeqRef.current) return;
 
       if (res.status === 401) {
         setSuggestionsError('Sign in required to view AI suggestions.');
@@ -602,24 +630,27 @@ export default function FindingsView() {
       }
 
       const data = await res.json();
-      if (currentSeq !== suggestionsSeqRef.current) return;
+      if (!isSuggestionsMountedRef.current || currentSeq !== suggestionsSeqRef.current) return;
 
       setSuggestions(data.suggestions || []);
       setSuggestionsTotalFindings(data.totalFindings || 0);
       setSuggestionsIsPartial(Boolean(data.isPartial));
     } catch (err: any) {
-      if (currentSeq !== suggestionsSeqRef.current) return;
+      if (err.name === 'AbortError' || controller.signal.aborted) {
+        return;
+      }
+      if (!isSuggestionsMountedRef.current || currentSeq !== suggestionsSeqRef.current) return;
       console.warn('Failed to load AI finding suggestions:', err);
       setSuggestionsError(err.message || 'Unable to connect to suggestion engine.');
       setSuggestions([]);
     } finally {
-      if (currentSeq === suggestionsSeqRef.current) {
+      if (isSuggestionsMountedRef.current && currentSeq === suggestionsSeqRef.current) {
         setSuggestionsLoading(false);
       }
     }
   }, []);
 
-  // When activeScan changes, discard old suggestions immediately, reset scan selection initialized state, and load new ones
+  // When activeScan changes, discard old suggestions immediately, reset scan selection initialized state, and load new ones if open
   useEffect(() => {
     hasInitializedSelectionRef.current = false;
     lastSelectedIdRef.current = null;
@@ -627,13 +658,30 @@ export default function FindingsView() {
     if (activeScan?.id) {
       setSuggestions([]);
       setSuggestionsError(null);
-      fetchSuggestions(activeScan.id);
+      if (showSuggestions) {
+        fetchSuggestions(activeScan.id);
+      }
     } else {
       setSuggestions([]);
       setSuggestionsLoading(false);
       setSuggestionsError(null);
     }
-  }, [activeScan?.id, fetchSuggestions]);
+  }, [activeScan?.id, showSuggestions, fetchSuggestions]);
+
+  const handleToggleSuggestions = useCallback(() => {
+    setShowSuggestions((prev) => {
+      const next = !prev;
+      if (next && activeScan?.id && suggestions.length === 0 && !suggestionsLoading) {
+        fetchSuggestions(activeScan.id);
+      } else if (!next) {
+        if (suggestionsAbortControllerRef.current) {
+          suggestionsAbortControllerRef.current.abort();
+        }
+        setSuggestionsLoading(false);
+      }
+      return next;
+    });
+  }, [activeScan?.id, suggestions.length, suggestionsLoading, fetchSuggestions]);
 
   // Synchronize state changes to URL query parameters smoothly
   const syncFiltersToUrl = useCallback(
@@ -854,12 +902,13 @@ export default function FindingsView() {
         (f) =>
           f.id === cleanId ||
           f.id === decoded ||
-          (f.id && decodeURIComponent(f.id) === decoded) ||
-          (f.fingerprint && (f.fingerprint === cleanId || f.fingerprint === decoded))
+          (f.id && decodeURIComponent(f.id) === decoded)
       );
       if (targetFinding) {
         handleSelectFinding(targetFinding);
         ensureFindingVisible(targetFinding);
+      } else {
+        showToast('This finding is from a previous scan — rescan the repository to refresh it', 'info');
       }
       if (typeof window !== 'undefined') {
         const el = document.getElementById(`finding-${cleanId}`) || document.getElementById(`finding-${decoded}`);
@@ -868,7 +917,7 @@ export default function FindingsView() {
         }
       }
     },
-    [findings, handleSelectFinding, ensureFindingVisible]
+    [findings, handleSelectFinding, ensureFindingVisible, showToast]
   );
 
   // Clear bulk selection when active filters, search query, or activeScan change
@@ -1350,6 +1399,26 @@ export default function FindingsView() {
           nextReviewed ? 'Marked finding as reviewed' : 'Unmarked review status',
           'info'
         );
+      } else if (res.status === 401) {
+        setFindings(previousFindings);
+        if (selectedFinding?.id === targetId) {
+          setSelectedFinding(previousFinding);
+        }
+        setSessionExpired?.(true);
+        openAuthModal?.({ initialMode: 'login' });
+        showToast('Session expired — please sign in again', 'error');
+      } else if (res.status === 403) {
+        setFindings(previousFindings);
+        if (selectedFinding?.id === targetId) {
+          setSelectedFinding(previousFinding);
+        }
+        showToast('Responsible disclosure protocol: you do not have permission to modify this finding', 'info');
+      } else if (res.status === 404) {
+        setFindings(previousFindings);
+        if (selectedFinding?.id === targetId) {
+          setSelectedFinding(previousFinding);
+        }
+        showToast('This finding is from a previous scan — rescan the repository to refresh it', 'info');
       } else {
         const err = await res.json().catch(() => ({}));
         // Truthful rollback
@@ -1389,23 +1458,32 @@ export default function FindingsView() {
     }
   };
 
-  const handleCopyEvidence = (text?: string) => {
+  const handleCopyEvidence = async (text?: string) => {
     if (!text) return;
-    navigator.clipboard.writeText(text);
-    setCopiedEvidence(true);
-    showToast('Evidence snippet copied to clipboard', 'info');
-    setTimeout(() => setCopiedEvidence(false), 2000);
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedEvidence(true);
+      showToast('Evidence snippet copied to clipboard', 'info');
+      setTimeout(() => setCopiedEvidence(false), 2000);
+    } catch {
+      showToast('Unable to copy evidence snippet', 'error');
+    }
   };
 
-  const handleCopyHash = (hash?: string) => {
+  const handleCopyHash = async (hash?: string) => {
     if (!hash) return;
-    navigator.clipboard.writeText(hash);
-    setCopiedHash(true);
-    showToast('Evidence SHA-256 hash copied to clipboard', 'info');
-    setTimeout(() => setCopiedHash(false), 2000);
+    try {
+      await navigator.clipboard.writeText(hash);
+      setCopiedHash(true);
+      showToast('Evidence SHA-256 hash copied to clipboard', 'info');
+      setTimeout(() => setCopiedHash(false), 2000);
+    } catch {
+      showToast('Unable to copy SHA-256 hash', 'error');
+    }
   };
 
   const handleRequestExplanation = async (finding: Finding) => {
+    if (!finding || explainingId) return;
     setExplainingId(finding.id);
     try {
       const res = await fetch('/api/explain', {
@@ -1413,9 +1491,18 @@ export default function FindingsView() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ findingId: finding.id }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (res.ok) {
         setCurrentExplanation(data.explanation);
+        showToast('Grounded explanation generated', 'success');
+      } else if (res.status === 401) {
+        setSessionExpired?.(true);
+        openAuthModal?.({ initialMode: 'login' });
+        showToast('Session expired — please sign in again', 'error');
+      } else if (res.status === 403) {
+        showToast('Responsible disclosure protocol: secrets and critical findings must not be shared publicly.', 'info');
+      } else if (res.status === 404) {
+        showToast('This finding is from a previous scan — rescan the repository to refresh it', 'info');
       } else {
         showToast(data.error || 'Failed to explain finding', 'error');
       }
@@ -1427,6 +1514,7 @@ export default function FindingsView() {
   };
 
   const handleCreateRoute = async (finding: Finding) => {
+    if (!finding || creatingRouteId) return;
     setCreatingRouteId(finding.id);
     try {
       const res = await fetch('/api/routes', {
@@ -1434,10 +1522,18 @@ export default function FindingsView() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ findingId: finding.id }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (res.ok) {
         showToast('Contribution route created!', 'success');
         router.push(`/app/contributions?routeId=${data.route.id}`);
+      } else if (res.status === 401) {
+        setSessionExpired?.(true);
+        openAuthModal?.({ initialMode: 'login' });
+        showToast('Session expired — please sign in again', 'error');
+      } else if (res.status === 403) {
+        showToast('Responsible disclosure protocol: secrets and critical findings must not be shared publicly.', 'info');
+      } else if (res.status === 404) {
+        showToast('This finding is from a previous scan — rescan the repository to refresh it', 'info');
       } else {
         showToast(data.error || 'Failed to create route', 'error');
       }
@@ -1820,29 +1916,65 @@ export default function FindingsView() {
           </p>
         </div>
 
-        <button
-          onClick={() => router.push('/app/scan')}
-          className="min-h-[44px] px-5 py-2.5 rounded-full bg-blackHole hover:bg-blackHole/80 text-textPrimary border border-borderDark text-xs font-medium transition-colors self-start md:self-auto flex items-center justify-center press-spring touch-manipulation"
-        >
-          Scan Another Repo
-        </button>
+        <div className="flex items-center gap-3 self-start md:self-auto flex-wrap">
+          {/* AI Suggestions Accessible Switch Toggle */}
+          <div className="flex items-center gap-2.5 px-3.5 py-2 rounded-full bg-blackHole/60 border border-borderDark text-xs font-medium text-textPrimary select-none">
+            <Sparkles className={`w-3.5 h-3.5 transition-colors ${showSuggestions ? 'text-lemonChiffon' : 'text-textMuted'}`} aria-hidden="true" />
+            <span id="ai-suggestions-toggle-label" className="text-xs font-medium text-textPrimary">
+              AI Suggestions
+            </span>
+            <button
+              type="button"
+              role="switch"
+              id="ai-suggestions-toggle"
+              aria-checked={showSuggestions}
+              aria-labelledby="ai-suggestions-toggle-label"
+              onClick={handleToggleSuggestions}
+              className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lemonChiffon focus-visible:ring-offset-2 focus-visible:ring-offset-black press-spring touch-manipulation ${
+                showSuggestions ? 'bg-lemonChiffon' : 'bg-blackHole border-borderDark'
+              }`}
+            >
+              <span
+                className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-black shadow-lg ring-0 transition duration-200 ease-in-out ${
+                  showSuggestions ? 'translate-x-4' : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </div>
+
+          <button
+            onClick={() => router.push('/app/scan')}
+            className="min-h-[44px] px-5 py-2.5 rounded-full bg-blackHole hover:bg-blackHole/80 text-textPrimary border border-borderDark text-xs font-medium transition-colors self-start md:self-auto flex items-center justify-center press-spring touch-manipulation"
+          >
+            Scan Another Repo
+          </button>
+        </div>
       </div>
 
       {/* Beginner-Friendly AI Finding Suggestions (Grounded in Verified Scanner Results) */}
-      <AIFindingSuggestionsSection
-        suggestions={suggestions}
-        loading={suggestionsLoading}
-        error={suggestionsError}
-        onRetry={() => {
-          if (activeScan?.id) {
-            fetchSuggestions(activeScan.id);
-          }
-        }}
-        isPartial={suggestionsIsPartial}
-        totalFindings={suggestionsTotalFindings}
-        hasScan={Boolean(activeScan)}
-        onSelectFinding={handleSelectSuggestionFinding}
-      />
+      {showSuggestions && (
+        <AIFindingSuggestionsSection
+          suggestions={suggestions}
+          loading={suggestionsLoading}
+          error={suggestionsError}
+          onRetry={() => {
+            if (activeScan?.id) {
+              fetchSuggestions(activeScan.id);
+            }
+          }}
+          isPartial={suggestionsIsPartial}
+          totalFindings={suggestionsTotalFindings}
+          hasScan={Boolean(activeScan)}
+          onSelectFinding={handleSelectSuggestionFinding}
+          onClose={() => {
+            setShowSuggestions(false);
+            if (suggestionsAbortControllerRef.current) {
+              suggestionsAbortControllerRef.current.abort();
+            }
+            setSuggestionsLoading(false);
+          }}
+        />
+      )}
 
       {/* Filter Toolbar with URL Sync, Debounced Inputs, and Active Filter Chips */}
       <div className="glass-panel p-4 sm:p-5 rounded-2xl border border-borderDark space-y-3.5">
@@ -2372,6 +2504,31 @@ export default function FindingsView() {
                         <span>{selectedFinding.reviewed ? 'Reviewed ✓' : 'Mark as Reviewed'}</span>
                       </button>
 
+                      {/* Dismiss / Restore Finding (Soft delete / archive semantics) */}
+                      {selectedFinding.status === 'dismissed' ? (
+                        <button
+                          type="button"
+                          onClick={() => executeBulkDismiss(false, [selectedFinding.id])}
+                          disabled={isBulkOperating}
+                          className="min-h-[44px] px-3.5 py-2 rounded-xl bg-coffeeBean text-lemonChiffon border border-lemonChiffon/30 text-xs font-semibold flex items-center gap-1.5 transition-colors press-spring touch-manipulation"
+                          title="Restore finding to active list"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5 text-lemonChiffon" />
+                          <span>Restore</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setSingleFindingToDismiss(selectedFinding)}
+                          disabled={isBulkOperating}
+                          className="min-h-[44px] px-3.5 py-2 rounded-xl bg-black/60 hover:bg-rosewood/20 border border-rosewood/40 text-red-300 text-xs font-semibold flex items-center gap-1.5 transition-colors press-spring touch-manipulation"
+                          title="Dismiss finding from active reports"
+                        >
+                          <EyeOff className="w-3.5 h-3.5 text-red-400" />
+                          <span>Dismiss</span>
+                        </button>
+                      )}
+
                       {/* Deep Link to Dedicated Detail Page */}
                       <Link
                         href={`/app/findings/${encodeURIComponent(selectedFinding.id)}`}
@@ -2542,9 +2699,9 @@ export default function FindingsView() {
 
                   {/* Engine Badge rendering active engine label + fallback notice */}
                   <EngineBadge
-                    engine={currentExplanation?.generatedBy || (activeScan ? 'deterministic' : 'gemma')}
-                    fallback={currentExplanation?.fallback ?? true}
-                    fallbackReason={currentExplanation?.fallbackReason}
+                    engine={currentExplanation?.generatedBy || (currentExplanation?.fallback ? 'deterministic' : (activeScan ? 'deterministic' : 'gemma'))}
+                    fallback={currentExplanation?.fallback ?? (!currentExplanation || currentExplanation.generatedBy === 'deterministic')}
+                    fallbackReason={currentExplanation?.fallbackReason || (!currentExplanation ? 'Deterministic perspective rules — verified evidence' : undefined)}
                   />
 
                   <div className="p-4 rounded-xl bg-black border border-borderDark space-y-2">
@@ -2762,7 +2919,7 @@ export default function FindingsView() {
                       {creatingRouteId === selectedFinding.id ? (
                         <>
                           <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          <span>Structuring Route...</span>
+                          <span>Planning Route...</span>
                         </>
                       ) : (
                         <>
@@ -2840,7 +2997,7 @@ export default function FindingsView() {
               <div>
                 <div className="flex items-center gap-2 mb-2">
                   <EngineBadge
-                    engine={currentExplanation.generatedBy || 'gemma'}
+                    engine={currentExplanation.generatedBy || (currentExplanation.fallback ? 'deterministic' : 'gemma')}
                     fallback={currentExplanation.fallback}
                     fallbackReason={currentExplanation.fallbackReason}
                   />
@@ -2977,6 +3134,26 @@ export default function FindingsView() {
           }
         }}
         onCancel={() => setSingleFindingToUnmark(null)}
+      />
+
+      {/* Destructive Action Confirmation Dialog 4: Single Finding Dismiss */}
+      <ConfirmDialog
+        isOpen={Boolean(singleFindingToDismiss)}
+        title="Dismiss Finding?"
+        description={`Dismiss "${singleFindingToDismiss?.title || 'this finding'}"? This hides it from this scan's active report.`}
+        consequenceWarning="Dismissed findings will be hidden from active contribution routes and default lists. You can view or restore them at any time using the Dismissed / Resolved filter."
+        confirmLabel="Dismiss Finding"
+        cancelLabel="Keep Open"
+        isDestructive={true}
+        isBusy={isBulkOperating}
+        onConfirm={async () => {
+          if (singleFindingToDismiss) {
+            const targetId = singleFindingToDismiss.id;
+            setSingleFindingToDismiss(null);
+            await executeBulkDismiss(true, [targetId]);
+          }
+        }}
+        onCancel={() => setSingleFindingToDismiss(null)}
       />
 
     </div>

@@ -18,7 +18,7 @@ export async function GET(
     if (auth.error) return auth.error;
     const user = auth.user;
 
-    const scan = db.getScanById(scanId);
+    const scan = await db.getScanById(scanId);
     if (!scan) {
       return apiError('Scan not found', 404, 'GITHUB_NOT_FOUND');
     }
@@ -28,8 +28,8 @@ export async function GET(
       return apiError('Unauthorized access to this scan', 403, 'AUTH_INVALID_CREDENTIALS');
     }
 
-    const findings = db.getFindings(scanId);
-    const routes = db.getRoutes(scanId);
+    const findings = await db.getFindingsByScanId(scanId);
+    const routes = await db.getRoutesByScanId(scanId);
     const drafts = db.getDrafts(scanId);
 
     return NextResponse.json({
@@ -73,7 +73,7 @@ export async function DELETE(
     if (auth.error) return auth.error;
     const user = auth.user;
 
-    const scan = db.getScanById(scanId);
+    const scan = await db.getScanById(scanId);
     if (!scan) {
       return apiError('Scan not found', 404, 'GITHUB_NOT_FOUND');
     }

@@ -29,7 +29,7 @@ export async function GET(req: Request) {
     let targetScan: any = null;
 
     if (scanId) {
-      targetScan = db.getScanById(scanId);
+      targetScan = await db.getScanById(scanId);
       if (!targetScan) {
         return apiError('Scan not found', 404, 'GITHUB_NOT_FOUND');
       }
@@ -57,7 +57,7 @@ export async function GET(req: Request) {
     }
 
     // Retrieve verified findings directly from deterministic scanner database
-    const findings = db.getFindings(targetScan.id);
+    const findings = await db.getFindingsByScanId(targetScan.id);
 
     if (findings.length === 0) {
       const emptyResponse: AIFindingSuggestionsResponse = {

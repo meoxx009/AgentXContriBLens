@@ -22,12 +22,12 @@ export async function GET(
       return apiError('routeId is required', 400, 'AUTH_INVALID_INPUT');
     }
 
-    const route = db.getRouteById(routeId);
+    const route = await db.getRouteById(routeId);
     if (!route) {
       return apiError('Route not found', 404, 'GITHUB_NOT_FOUND');
     }
 
-    const scan = db.getScanById(route.scanId);
+    const scan = await db.getScanById(route.scanId);
     if (!scan) {
       return apiError('Associated scan not found', 404, 'GITHUB_NOT_FOUND');
     }
@@ -36,7 +36,7 @@ export async function GET(
     }
 
     const fId = route.findingId || (route.findingIds && route.findingIds[0]);
-    const finding = fId ? db.getFindingById(fId) : null;
+    const finding = fId ? await db.getFindingById(fId) : null;
     if (!finding) {
       return apiError('Finding not found', 404, 'GITHUB_NOT_FOUND');
     }
@@ -61,7 +61,7 @@ export async function GET(
     const readiness = route.contributionReadiness || calculateContributionReadiness(finding);
     const chain = route.evidenceChain || buildEvidenceChain(finding, { repoName: scan.repoName });
     const checklist = route.learningChecklist || generateSkillChecklist(finding, route);
-    const draft = route.draftId ? db.getDraftById(route.draftId) : undefined;
+    const draft = route.draftId ? await db.getDraftById(route.draftId) : undefined;
 
     const packMarkdown = generateContributionPackMarkdown(
       route,

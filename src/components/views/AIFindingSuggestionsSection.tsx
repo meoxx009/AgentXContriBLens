@@ -15,6 +15,7 @@ import {
   CheckCircle2,
   BookOpen,
   Compass,
+  X,
 } from 'lucide-react';
 import type { AIFindingSuggestion, Severity } from '@/types';
 import { EngineBadge } from '@/components/ui/EngineBadge';
@@ -28,6 +29,7 @@ interface AIFindingSuggestionsSectionProps {
   totalFindings: number;
   hasScan: boolean;
   onSelectFinding: (findingId: string) => void;
+  onClose?: () => void;
 }
 
 function SuggestionSeverityBadge({ severity }: { severity?: Severity | string }) {
@@ -78,6 +80,7 @@ export default function AIFindingSuggestionsSection({
   totalFindings,
   hasScan,
   onSelectFinding,
+  onClose,
 }: AIFindingSuggestionsSectionProps) {
   // If no scan is selected yet and not loading, show nothing or calm prompt
   if (!hasScan && !loading && !error) {
@@ -128,16 +131,26 @@ export default function AIFindingSuggestionsSection({
           )}
         </div>
 
-        {/* Engine Badge */}
-        {!loading && !error && suggestions.length > 0 && (
-          <div className="self-start sm:self-auto shrink-0">
+        {/* Engine Badge & Close Button */}
+        <div className="flex items-center gap-2.5 self-start sm:self-auto shrink-0">
+          {!loading && !error && suggestions.length > 0 && (
             <EngineBadge
               engine={primaryEngine}
               fallback={hasFallback}
               fallbackReason={fallbackReason}
             />
-          </div>
-        )}
+          )}
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close AI suggestions"
+              className="p-1.5 rounded-lg text-textMuted hover:text-textPrimary hover:bg-white/5 transition-colors press-spring touch-manipulation focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lemonChiffon"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* State 1: Loading Skeleton */}

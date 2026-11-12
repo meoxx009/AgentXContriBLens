@@ -77,7 +77,7 @@ export async function POST(req: Request) {
     }
 
     // 4. Verify scan ownership in database
-    const scan = db.getScanById(scanId);
+    const scan = await db.getScanById(scanId);
     if (!scan) {
       return apiError('Scan record not found.', 404, 'GITHUB_NOT_FOUND');
     }
@@ -134,7 +134,7 @@ export async function POST(req: Request) {
 
     const targetFindings: Finding[] = [];
     for (const fId of findingIds) {
-      const found = db.getFindingById(fId);
+      const found = await db.getFindingById(fId);
       if (!found || found.scanId !== scan.id) {
         return NextResponse.json(
           { error: `Unknown finding ID: "${fId}".`, errorCode: 'GITHUB_NOT_FOUND', ok: false },

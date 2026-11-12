@@ -21,12 +21,12 @@ export async function GET(
     if (auth.error) return auth.error;
     const user = auth.user;
 
-    const route = db.getRouteById(routeId);
+    const route = await db.getRouteById(routeId);
     if (!route) {
       return apiError('Route not found', 404, 'GITHUB_NOT_FOUND');
     }
 
-    const scan = db.getScanById(route.scanId);
+    const scan = await db.getScanById(route.scanId);
     if (!scan) {
       return apiError('Associated scan not found', 404, 'GITHUB_NOT_FOUND');
     }
@@ -35,7 +35,7 @@ export async function GET(
     }
 
     const fId = route.findingId || (route.findingIds && route.findingIds[0]);
-    const finding = fId ? db.getFindingById(fId) : null;
+    const finding = fId ? await db.getFindingById(fId) : null;
 
     // Ensure readiness, evidence chain, and learning checklist are populated
     if (finding) {
@@ -58,6 +58,8 @@ export async function GET(
         route.explanationModes = generateExplanationModes(finding, route);
       }
       db.saveRoute(route);
+    await db.syncRouteToSupabase(route);
+      await db.syncRouteToSupabase(route);
     }
 
     return NextResponse.json({
@@ -99,12 +101,12 @@ export async function PATCH(
 
     const { status, learningChecklist, skillId, completed } = body || {};
 
-    const route = db.getRouteById(routeId);
+    const route = await db.getRouteById(routeId);
     if (!route) {
       return apiError('Route not found', 404, 'GITHUB_NOT_FOUND');
     }
 
-    const scan = db.getScanById(route.scanId);
+    const scan = await db.getScanById(route.scanId);
     if (!scan) {
       return apiError('Associated scan not found', 404, 'GITHUB_NOT_FOUND');
     }
@@ -144,13 +146,14 @@ export async function PATCH(
       route.learningChecklist = learningChecklist;
     } else if (skillId && typeof completed === 'boolean') {
       if (route.learningChecklist) {
-        route.learningChecklist = route.learningChecklist.map((item) =>
+        route.learningChecklist = route.learningChecklist.map((item: any) =>
           item.id === skillId ? { ...item, completed } : item
         );
       }
     }
 
     db.saveRoute(route);
+    await db.syncRouteToSupabase(route);
 
     // Persist contributor progress durable memory across sessions
     const learnedSkills = (route.learningChecklist || [])

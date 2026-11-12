@@ -19,7 +19,7 @@ export async function GET(
     if (auth.error) return auth.error;
     const user = auth.user;
 
-    const draft = db.getDraftById(draftId);
+    const draft = await db.getDraftById(draftId);
     if (!draft) {
       return apiError('Draft not found', 404, 'GITHUB_NOT_FOUND');
     }
@@ -53,7 +53,7 @@ export async function PATCH(
     if (auth.error) return auth.error;
     const user = auth.user;
 
-    const existingDraft = db.getDraftById(draftId);
+    const existingDraft = await db.getDraftById(draftId);
     if (!existingDraft) {
       return apiError('Draft not found', 404, 'GITHUB_NOT_FOUND');
     }
@@ -131,6 +131,8 @@ export async function PATCH(
       return apiError('Draft not found', 404, 'GITHUB_NOT_FOUND');
     }
 
+    await db.syncDraftToSupabase(updated);
+
     if (reviewDecision) {
       db.logActivity({
         userId: user.id,
@@ -165,7 +167,7 @@ export async function DELETE(
       return apiError('draftId is required', 400, 'AUTH_INVALID_INPUT');
     }
 
-    const existingDraft = db.getDraftById(draftId);
+    const existingDraft = await db.getDraftById(draftId);
     if (!existingDraft) {
       return apiError('Draft not found', 404, 'GITHUB_NOT_FOUND');
     }
