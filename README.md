@@ -35,10 +35,11 @@
 
 <p align="center">
   <a href="#-quick-start-zero-config">Quick Start</a> •
+  <a href="#-visual-walkthrough">Visual Walkthrough</a> •
   <a href="#-why-contriblens">Why ContribLens</a> •
   <a href="#-core-capabilities">Core Capabilities</a> •
-  <a href="#-system-architecture">Architecture</a> •
   <a href="#-pipeline-flowchart">Pipeline Flowchart</a> •
+  <a href="#-system-architecture">Architecture</a> •
   <a href="#-security--safety-contract">Security & Safety</a> •
   <a href="https://hacktoberfest-contri-blens.vercel.app/">Live Webapp ↗</a>
 </p>
@@ -49,9 +50,20 @@
 
 ## ⚡ Visual Walkthrough
 
+Experience the complete ContribLens flow: from entering a repository URL, through the bounded deterministic scanner and grounding engine, to a beginner-ready pull request plan.
+
 <div align="center">
-  <p><strong>Landing Hero & Value Proposition</strong></p>
-  <img src="docs/assets/01-landing-hero.png" width="900" alt="ContribLens Landing Page" style="border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);" />
+  <p><strong>0. Interactive Scan Flow in Action</strong></p>
+  <img src="docs/assets/scan-flow-demo.gif" width="940" alt="ContribLens Scan Flow Demo" style="border-radius: 8px; border: 1px solid rgba(255,255,255,0.12); box-shadow: 0 20px 50px -15px rgba(0, 0, 0, 0.7);" />
+  <p><em>Real-time audit: repository input → 6-stage pipeline → Contribution Readiness scoring → beginner PR plan details.</em></p>
+</div>
+
+<br />
+
+<div align="center">
+  <p><strong>1. Landing Hero & Liquid Glass Material System</strong></p>
+  <img src="docs/assets/01-landing-hero.png" width="940" alt="ContribLens Landing Page" style="border-radius: 8px; border: 1px solid rgba(255,255,255,0.12);" />
+  <p><em>Smoky ambient background with liquid glass navigation capsule, trust indicators, and core philosophy.</em></p>
 </div>
 
 <br />
@@ -60,18 +72,26 @@
   <table>
     <tr>
       <td width="50%" align="center">
-        <strong>1. Bounded Repository Scanner</strong><br /><br />
-        <img src="docs/assets/02-scan-repository.png" width="100%" alt="Repository Security Scanner" />
+        <strong>2. Bounded Repository Scanner</strong><br /><br />
+        <img src="docs/assets/02-scan-repository.png" width="100%" alt="Repository Security Scanner" style="border-radius: 6px; border: 1px solid rgba(255,255,255,0.1);" /><br />
+        <sub>Strict read-only ingestion bounded to 60 files / 15 MB payload with scope choices.</sub>
       </td>
       <td width="50%" align="center">
-        <strong>2. Contribution Readiness Scoring</strong><br /><br />
-        <img src="docs/assets/03-live-findings-readiness.png" width="100%" alt="Readiness Score & Findings" />
+        <strong>3. Contribution Readiness Scoring</strong><br /><br />
+        <img src="docs/assets/03-live-findings-readiness.png" width="100%" alt="Readiness Score & Findings" style="border-radius: 6px; border: 1px solid rgba(255,255,255,0.1);" /><br />
+        <sub>Multi-factor scoring (0–100) separating urgency from difficulty, with scan diff tracking.</sub>
       </td>
     </tr>
     <tr>
-      <td colspan="2" align="center">
-        <strong>3. Grounded Explanation & Disclosure-Guarded Route</strong><br /><br />
-        <img src="docs/assets/04-grounded-pipeline-card.png" width="85%" alt="Grounded Pipeline Card" />
+      <td width="50%" align="center">
+        <strong>4. Grounded Explanation & Beginner PR Plan</strong><br /><br />
+        <img src="docs/assets/04-grounded-pipeline-card.png" width="100%" alt="Grounded Pipeline Card" style="border-radius: 6px; border: 1px solid rgba(255,255,255,0.1);" /><br />
+        <sub>3-part explanation (What, Why, Fix), verified SHA-256 evidence, and curated learning skills.</sub>
+      </td>
+      <td width="50%" align="center">
+        <strong>5. Public Platform Activity & Metrics</strong><br /><br />
+        <img src="docs/assets/05-dashboard.png" width="100%" alt="Public Platform Stats" style="border-radius: 6px; border: 1px solid rgba(255,255,255,0.1);" /><br />
+        <sub>Aggregate community statistics at <code>/stats</code> without exposing user-private details.</sub>
       </td>
     </tr>
   </table>
@@ -136,51 +156,67 @@ An agentic execution engine built with a strict **7-tool validated registry**:
 
 ## 🔄 Pipeline Flowchart
 
-The diagram below illustrates the end-to-end data pipeline from public repository URL to verified beginner pull request:
+The animated, styled diagram below illustrates the end-to-end data pipeline from public repository URL to verified beginner pull request:
 
 ```mermaid
 flowchart TD
-    %% Base Styling & Flow
-    Start([User Inputs Public GitHub Repository]) --> Ingestion[Bounded Ingestion Engine<br/>Max 60 Files · 15 MB · AST Only]
-    
-    subgraph Scanner[" 1. Authoritative Deterministic Scanner "]
-        Ingestion --> AST[Static AST Parser]
-        AST --> R1[GitHub Actions Least-Privilege]
-        AST --> R2[Manifest Dependencies]
-        AST --> R3[In-Memory Secret Detection]
-        AST --> R4[Repository Health & Hygiene]
-        R2 --> OSV[OSV.dev Vulnerability API<br/>Keyless CVE Cross-Check]
+    %% ContribLens Liquid Glass & Smoky Dark Theme Palette
+    classDef startEnd fill:#FF6D1F,stroke:#FFF8CA,stroke-width:2px,color:#000000,font-weight:bold;
+    classDef scannerStage fill:#16151A,stroke:#FF6D1F,stroke-width:1.5px,color:#FAF3E1;
+    classDef groundingStage fill:#1A1921,stroke:#CDE3E8,stroke-width:1.5px,color:#FAF3E1;
+    classDef agentStage fill:#1E1714,stroke:#FF6D1F,stroke-width:1.5px,color:#FAF3E1;
+    classDef guardBlocked fill:#381214,stroke:#E53E3E,stroke-width:2px,color:#FFC5C5;
+    classDef guardPassed fill:#0D2818,stroke:#38A169,stroke-width:2px,color:#D1FAE5;
+    classDef humanGate fill:#2D1F0E,stroke:#FFF8CA,stroke-width:2px,color:#FFF8CA,font-weight:bold;
+    classDef exportDeliver fill:#122019,stroke:#48BB78,stroke-width:2px,color:#FFFFFF,font-weight:bold;
+    classDef default fill:#141318,stroke:#2D2B35,stroke-width:1.5px,color:#FAF3E1;
+
+    Start([User Inputs Public GitHub Repository URL]):::startEnd --> Ingest[Bounded Ingestion Engine<br/>Max 60 Files · 15 MB · AST Only]:::scannerStage
+
+    subgraph S1[" 1. Authoritative Deterministic Scanner "]
+        Ingest --> AST[Static AST Parser]:::scannerStage
+        AST --> R1[GitHub Actions Least-Privilege Rules]:::scannerStage
+        AST --> R2[Dependency Manifest Parser]:::scannerStage
+        AST --> R3[In-Memory Secret Detection Engine]:::scannerStage
+        AST --> R4[Repository Health & Community Standards]:::scannerStage
+        R2 --> OSV[OSV.dev Vulnerability Feed<br/>Keyless CVE Cross-Check]:::scannerStage
     end
 
-    subgraph Grounding[" 2. Evidence Grounding & Cryptography "]
-        R1 & R3 & R4 & OSV --> Evidence[Evidence Chain Generator]
-        Evidence --> Redactor[In-Memory Secret Redaction<br/>Pre-Storage & Pre-AI]
-        Redactor --> Hash[SHA-256 Cryptographic Checksum]
+    subgraph S2[" 2. Evidence Grounding & Cryptography "]
+        R1 & R3 & R4 & OSV --> Chain[Evidence Chain Assembler]:::groundingStage
+        Chain --> Redact[In-Memory Secret Redaction<br/>Pre-Storage · Pre-Logs · Pre-AI]:::groundingStage
+        Redact --> Hash[Cryptographic SHA-256 Evidence Hash]:::groundingStage
     end
 
-    subgraph Orchestrator[" 3. Agent Planner & 7-Tool Registry "]
-        Hash --> Planner[Agent Orchestrator Loop<br/>Monotonic SSE Event Stream]
-        Planner --> TRegistry{7-Tool Allowlist}
-        TRegistry --> T1[github_fetch_tree]
-        TRegistry --> T2[fetch_file]
-        TRegistry --> T3[rule_scan]
-        TRegistry --> T4[osv_lookup]
-        TRegistry --> T5[explain_finding]
-        TRegistry --> T6[draft_issue]
-        TRegistry --> T7[patch_preview]
+    subgraph S3[" 3. Agent Planner & 7-Tool Registry "]
+        Hash --> Loop[Agent Orchestrator Loop<br/>Monotonic SSE Event Stream]:::agentStage
+        Loop --> Registry{7-Tool Allowlist}:::agentStage
+        Registry --> T1[github_fetch_tree]:::agentStage
+        Registry --> T2[fetch_file]:::agentStage
+        Registry --> T3[rule_scan]:::agentStage
+        Registry --> T4[osv_lookup]:::agentStage
+        Registry --> T5[explain_finding]:::agentStage
+        Registry --> T6[draft_issue]:::agentStage
+        Registry --> T7[patch_preview]:::agentStage
     end
 
-    subgraph Safety[" 4. Safety Guard & Disclosure Barrier "]
-        TRegistry --> Guard{Disclosure Guard<br/>Secret or Critical?}
-        Guard -- Yes --> Block[403 DISCLOSURE_BLOCKED<br/>Private Disclosure Guide Only]
-        Guard -- No --> AIExp[Grounded 3-Part Explanation<br/>Gemma 4 · Gemini 2.5 · Deterministic]
+    subgraph S4[" 4. Safety Guard & Grounded Inference "]
+        Registry --> Guard{Disclosure Guard<br/>Secret or Critical?}:::guardBlocked
+        Guard -- Yes --> Block[403 DISCLOSURE_BLOCKED<br/>Private Advisory Guidelines Only]:::guardBlocked
+        Guard -- No --> AI[Multi-Tier AI Inference<br/>Gemma 4 31B → Gemini 2.5 → Deterministic]:::guardPassed
     end
 
-    subgraph Output[" 5. Contributor Delivery "]
-        AIExp --> Plan[Beginner Contribution Route<br/>Readiness Score 0-100 · Skills Gap]
-        Plan --> HumanGate{{Human Approval Gate<br/>Maintainer & Contributor Review}}
-        HumanGate --> Export[GitHub Markdown Issue Draft &<br/>Local Git Contribution Pack]
+    subgraph S5[" 5. Contributor Delivery & Human Gate "]
+        AI --> Route[Beginner Contribution Route<br/>Readiness Score 0-100 · Skills Gap]:::exportDeliver
+        Route --> Gate{{Human Approval Gate<br/>Maintainer & Contributor Review}}:::humanGate
+        Gate --> Export[GitHub Markdown Issue Draft &<br/>Local Git Contribution Pack]:::exportDeliver
     end
+
+    style S1 fill:#0E0D12,stroke:#FF6D1F,stroke-width:1px,color:#FFF8CA
+    style S2 fill:#0F1015,stroke:#CDE3E8,stroke-width:1px,color:#CDE3E8
+    style S3 fill:#141012,stroke:#FF6D1F,stroke-width:1px,color:#FAF3E1
+    style S4 fill:#170E10,stroke:#E53E3E,stroke-width:1px,color:#FFC5C5
+    style S5 fill:#0B1410,stroke:#38A169,stroke-width:1px,color:#D1FAE5
 ```
 
 ---
@@ -191,37 +227,57 @@ ContribLens uses a clean 4-tier modular architecture designed for failure isolat
 
 ```mermaid
 graph TB
-    subgraph UI[" Tier 1: Presentation & Liquid Glass UI "]
-        A1[Next.js 15 App Router / React 19]
-        A2[Tailwind CSS 3.4 · Liquid Glass Tokens]
-        A3[Live Action Log Terminal · Lucide Icons]
-        A4[Optimistic UI Updates & Safe Rollback]
+    %% ContribLens 4-Tier System Architecture Palette
+    classDef tier1 fill:#17151D,stroke:#FF6D1F,stroke-width:1.5px,color:#FAF3E1;
+    classDef tier2 fill:#141720,stroke:#CDE3E8,stroke-width:1.5px,color:#FAF3E1;
+    classDef tier3 fill:#1E1A16,stroke:#FFF8CA,stroke-width:1.5px,color:#FAF3E1;
+    classDef tier4 fill:#101B14,stroke:#38A169,stroke-width:1.5px,color:#FAF3E1;
+    classDef database fill:#0D1711,stroke:#48BB78,stroke-width:2px,color:#D1FAE5;
+    classDef barrier fill:#2A1113,stroke:#E53E3E,stroke-width:2px,color:#FFC5C5;
+    classDef default fill:#141318,stroke:#2D2B35,stroke-width:1.5px,color:#FAF3E1;
+
+    subgraph T1[" Tier 1: Presentation & Liquid Glass UI "]
+        U1["Next.js 15 App Router & React 19"]:::tier1
+        U2["Liquid Glass Design System · Tailwind 3.4"]:::tier1
+        U3["Live Action Log Terminal & Monotonic Event Viewer"]:::tier1
+        U4["Optimistic UI Engine & Safe Rollback Store"]:::tier1
     end
 
-    subgraph API[" Tier 2: API Gateway & Orchestration "]
-        B1[API Router /api/scans /api/findings /api/agent]
-        B2[SSE Monotonic Event Stream Engine]
-        B3[Zod Request / Response Validation]
-        B4[In-Memory Rate Limiter & Debounce Engine]
+    subgraph T2[" Tier 2: API Gateway & Event Orchestration "]
+        A1["API Gateway Router · /api/scans · /api/findings · /api/agent"]:::tier2
+        A2["Server-Sent Events SSE Monotonic Stream Sequencer"]:::tier2
+        A3["Zod Runtime Schema Validation & Contract Guards"]:::tier2
+        A4["In-Memory Rate Limiter & Debounce Engine"]:::tier2
     end
 
-    subgraph Core[" Tier 3: Scanner & Intelligence Core "]
-        C1[Deterministic Rule Engine actions/manifests/health]
-        C2[OSV.dev Keyless Advisory Client]
-        C3["AI Adapter: Gemma 4 31B → Gemini 2.5 Flash"]
-        C4[Offline Deterministic Explanation Engine]
+    subgraph T3[" Tier 3: Scanner & Intelligence Core "]
+        C1["Authoritative Deterministic AST Engine · actions / manifests / health"]:::tier3
+        C2["OSV.dev Advisory Client · Keyless CVE / GHSA Feed"]:::tier3
+        C3["AI Adapter: Gemma 4 31B → Gemini 2.5 Flash Fallback"]:::tier3
+        C4["Keyless Offline Deterministic Explanation Engine"]:::tier3
     end
 
-    subgraph Security[" Tier 4: Storage, Privacy & Safety Contracts "]
-        D1[(Supabase PostgreSQL with RLS)]
-        D2[(Local-JSON DB Fallback .data/)]
-        D3[In-Memory Secret Sanitizer]
-        D4[Disclosure Guard Authoritative Enforcement]
+    subgraph T4[" Tier 4: Storage, Privacy & Safety Contracts "]
+        D1[("Supabase PostgreSQL with Row Level Security RLS")]:::database
+        D2[("Local-JSON Database Fallback · .data/db.json")]:::database
+        D3["In-Memory Secret Redaction Engine · Pre-Storage & Pre-AI"]:::barrier
+        D4{"Disclosure Guard · 403 DISCLOSURE_BLOCKED Enforcement"}:::barrier
     end
 
-    UI --> API
-    API --> Core
-    Core --> Security
+    %% Data Flow Connections
+    U1 & U2 -->|"Client Fetch / JSON"| A1
+    U3 <-->|"SSE Monotonic Stream (?sinceSeq)"| A2
+    A1 -->|"AST Ingestion & Bounds"| C1
+    A1 -->|"7-Tool Allowlist Execution"| C3
+    C1 -->|"CVE Advisory Cross-Check"| C2
+    C1 & C3 -->|"Sanitize Credentials"| D3
+    D3 -->|"Hashed Evidence & Safe Payloads"| D1 & D2
+    D4 -.->|"Blocks Public Export of Secrets / Critical"| A1
+
+    style T1 fill:#0F0E13,stroke:#FF6D1F,stroke-width:1px,color:#FF6D1F
+    style T2 fill:#0D1117,stroke:#CDE3E8,stroke-width:1px,color:#CDE3E8
+    style T3 fill:#14100D,stroke:#FFF8CA,stroke-width:1px,color:#FFF8CA
+    style T4 fill:#0B1410,stroke:#38A169,stroke-width:1px,color:#38A169
 ```
 
 ---
