@@ -89,9 +89,9 @@ Experience the complete ContribLens flow: from entering a repository URL, throug
         <sub>3-part explanation (What, Why, Fix), verified SHA-256 evidence, and curated learning skills.</sub>
       </td>
       <td width="50%" align="center">
-        <strong>5. Public Platform Activity & Metrics</strong><br /><br />
-        <img src="docs/assets/05-dashboard.png" width="100%" alt="Public Platform Stats" style="border-radius: 6px; border: 1px solid rgba(255,255,255,0.1);" /><br />
-        <sub>Aggregate community statistics at <code>/stats</code> without exposing user-private details.</sub>
+        <strong>5. Contributor Workspace & Scan History</strong><br /><br />
+        <img src="docs/assets/05-dashboard.png" width="100%" alt="Contributor Workspace Dashboard" style="border-radius: 6px; border: 1px solid rgba(255,255,255,0.1);" /><br />
+        <sub>Unified workspace showing active pipeline status, readiness trends, and prioritized PR recommendations.</sub>
       </td>
     </tr>
   </table>
