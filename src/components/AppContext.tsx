@@ -95,7 +95,18 @@ export function applySettingsToDom(settings?: UserSettings) {
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  const [activeScan, setActiveScan] = useState<ScanSummary | null>(null);
+  const [activeScan, setActiveScan] = useState<ScanSummary | null>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('contriblens_active_scan');
+        return saved ? JSON.parse(saved) : null;
+      } catch (err) {
+        console.debug('Failed to initialize activeScan from localStorage:', err);
+        return null;
+      }
+    }
+    return null;
+  });
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [isSessionExpired, setSessionExpired] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
@@ -123,7 +134,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [activeScan?.id]);
 
   const setSelectedFindingId = useCallback((id: string | null) => {
-    setSelectedFindingIdState(id);
+    setSelectedFindingIdState((prev) => (prev === id ? prev : id));
     if (typeof window !== 'undefined') {
       try {
         const key = `contriblens_selected_finding_${activeScan?.id || 'active'}`;
@@ -200,8 +211,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               const serverScans: ScanSummary[] = scansData.scans || [];
               const savedScanRaw = typeof window !== 'undefined' ? localStorage.getItem('contriblens_active_scan') : null;
               const savedScan: ScanSummary | null = savedScanRaw ? JSON.parse(savedScanRaw) : null;
-              const reconciled = reconcileActiveScan(serverScans, savedScan);
-              handleSetActiveScan(reconciled);
+              if (serverScans.length > 0) {
+                const reconciled = reconcileActiveScan(serverScans, savedScan);
+                if (reconciled) {
+                  const preservedFindings = savedScan?.findings || (reconciled.findings && reconciled.findings.length > 0 ? reconciled.findings : undefined);
+                  const mergedScan = preservedFindings ? { ...reconciled, findings: preservedFindings } : reconciled;
+                  handleSetActiveScan(mergedScan);
+                }
+              } else if (savedScan) {
+                setActiveScan(savedScan);
+              }
             } else if (scansRes.status === 401) {
               setUser(null);
               setSessionExpired(true);
@@ -317,7 +336,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleSetActiveScan = (scan: ScanSummary | null) => {
+  const handleSetActiveScan = useCallback((scan: ScanSummary | null) => {
     setActiveScan(scan);
     if (scan) {
       try {
@@ -332,7 +351,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         console.debug('Failed to remove active scan from localStorage:', err);
       }
     }
-  };
+  }, []);
 
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
     const id = Math.random().toString(36).substring(2, 9);

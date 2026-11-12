@@ -152,7 +152,8 @@ describe('Goal 12 — Error Handling Unification & Truthful Failure States', () 
 
       expect(source).toContain("setErrorType('network_offline')");
       expect(source).toContain("setErrorType('session_expired')");
-      expect(source).toContain('setActiveScan(null)'); // Self-healing on 404
+      // FindingsView preserves active scan context on transient 404 instead of destructive wipe
+      expect(source).toContain("res.status === 404 && activeScan");
     });
 
     it('verifies ContributionsView and DraftsView guard against stale scan 404s and offline failures', () => {
@@ -161,11 +162,13 @@ describe('Goal 12 — Error Handling Unification & Truthful Failure States', () 
 
       expect(contribSource).toContain("setErrorType('network_offline')");
       expect(contribSource).toContain("setErrorType('session_expired')");
-      expect(contribSource).toContain('setActiveScan(null)');
+      // ContributionsView falls back gracefully without wiping active scan
+      expect(contribSource).toContain("findingRes.status === 404) && activeScan");
 
       expect(draftsSource).toContain("setErrorType('network_offline')");
       expect(draftsSource).toContain("setErrorType('not_found')");
-      expect(draftsSource).toContain('setActiveScan(null)');
+      // DraftsView falls back gracefully without wiping active scan
+      expect(draftsSource).toContain("res.status === 404 && activeScan");
     });
   });
 });

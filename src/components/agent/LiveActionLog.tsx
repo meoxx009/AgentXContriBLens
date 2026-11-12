@@ -87,6 +87,19 @@ export default function LiveActionLog({
   const [branch, setBranch] = useState(initialBranch);
   const [goal, setGoal] = useState(initialGoal);
 
+  // Sync form inputs when parent active scan or URL props update
+  useEffect(() => {
+    if (initialRepoUrl) {
+      setRepoUrl((prev) => (prev !== initialRepoUrl ? initialRepoUrl : prev));
+    }
+  }, [initialRepoUrl]);
+
+  useEffect(() => {
+    if (initialBranch) {
+      setBranch((prev) => (prev !== initialBranch ? initialBranch : prev));
+    }
+  }, [initialBranch]);
+
   // Run State
   const [runId, setRunId] = useState<string | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<AgentRunStatus | 'idle' | 'reconnecting'>('idle');

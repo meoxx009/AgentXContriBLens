@@ -27,7 +27,11 @@ export async function GET(req: Request) {
     let findings = db.getFindings(scanId);
 
     if (scanId) {
-      const scan = db.getScanById(scanId);
+      let scan = db.getScanById(scanId);
+      if (!scan) {
+        await db.hydrateFromSupabase(user.id);
+        scan = db.getScanById(scanId);
+      }
       if (!scan) {
         return apiError('Scan not found', 404, 'GITHUB_NOT_FOUND');
       }
@@ -35,6 +39,10 @@ export async function GET(req: Request) {
         return apiError('Unauthorized access to scan', 403, 'AUTH_INVALID_CREDENTIALS');
       }
     } else {
+      const scans = db.getScans(user.id);
+      if (scans.length === 0) {
+        await db.hydrateFromSupabase(user.id);
+      }
       const userScanIds = db.getScans(user.id).map((s) => s.id);
       findings = findings.filter((f) => userScanIds.includes(f.scanId));
     }
@@ -135,7 +143,14 @@ export async function GET(req: Request) {
       return cB - cA;
     });
 
-    return NextResponse.json({ findings, ok: true, success: true });
+    return NextResponse.json(
+      { findings, ok: true, success: true },
+      {
+        headers: {
+          'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+        },
+      }
+    );
   } catch (error: any) {
     console.error('Error in GET /api/findings:', error?.message || error);
     return apiError(

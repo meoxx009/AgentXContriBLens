@@ -317,11 +317,14 @@ export default function ScanView() {
     if ((scanResult.scan.findingsCount?.total || 0) === 0) return;
 
     let isSubscribed = true;
-    fetch(`/api/findings?scanId=${encodeURIComponent(scanResult.scan.id)}`)
+    fetch(`/api/findings?scanId=${encodeURIComponent(scanResult.scan.id)}`, { cache: 'no-store' })
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (isSubscribed && data && Array.isArray(data.findings) && data.findings.length > 0) {
           setScanResult((prev) => (prev && prev.scan.id === scanResult.scan.id ? { ...prev, findings: data.findings } : prev));
+          if (activeScan && activeScan.id === scanResult.scan.id && (!activeScan.findings || activeScan.findings.length === 0)) {
+            setActiveScan({ ...activeScan, findings: data.findings });
+          }
         }
       })
       .catch((err) => {
@@ -331,7 +334,7 @@ export default function ScanView() {
     return () => {
       isSubscribed = false;
     };
-  }, [scanResult?.scan.id, scanResult?.findings, scanResult?.scan.findingsCount?.total]);
+  }, [scanResult?.scan.id, scanResult?.findings, scanResult?.scan.findingsCount?.total, activeScan, setActiveScan]);
 
   // Clean up on unmount to cancel in-flight stale responses
   useEffect(() => {
@@ -546,8 +549,12 @@ export default function ScanView() {
         hasWarnings,
       });
 
-      // P6 Contract: synchronize activeScan across views
-      setActiveScan(data.scan);
+      // P6 Contract: synchronize activeScan across views with full verified findings
+      const scanWithFindings: ScanSummary = {
+        ...data.scan,
+        findings: data.findings || [],
+      };
+      setActiveScan(scanWithFindings);
 
       if (data.scan) {
         if (data.scan.branch) {

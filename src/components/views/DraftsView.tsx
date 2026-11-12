@@ -204,14 +204,8 @@ function DraftsContent() {
       let url = activeScan ? `/api/drafts?scanId=${activeScan.id}` : '/api/drafts';
       let res = await fetch(url);
 
-      // Self-heal on 404 with stale activeScan
+      // Fallback on 404 with scanId: retry general drafts without wiping activeScan
       if (res.status === 404 && activeScan) {
-        setActiveScan(null);
-        try {
-          localStorage.removeItem('contriblens_active_scan');
-        } catch (err) {
-          console.debug('Failed to remove active scan from localStorage:', err);
-        }
         res = await fetch('/api/drafts');
       }
 

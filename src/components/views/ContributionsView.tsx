@@ -110,14 +110,8 @@ function ContributionsContent() {
         fetch(findingUrl),
       ]);
 
-      // Self-heal if 404 with stale activeScan
+      // Fallback if 404 with scanId: retry general routes without wiping activeScan
       if ((routeRes.status === 404 || findingRes.status === 404) && activeScan) {
-        setActiveScan(null);
-        try {
-          localStorage.removeItem('contriblens_active_scan');
-        } catch (err) {
-          console.debug('Failed to remove active scan from localStorage:', err);
-        }
         [routeRes, findingRes] = await Promise.all([
           fetch('/api/routes'),
           fetch('/api/findings'),

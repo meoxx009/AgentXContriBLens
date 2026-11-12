@@ -292,9 +292,14 @@ export default function FindingsView() {
   const searchParams = useSearchParams();
   const { activeScan, showToast, setActiveScan, setSessionExpired, openAuthModal, selectedFindingId, setSelectedFindingId } = useApp();
 
-  const [findings, setFindings] = useState<Finding[]>([]);
+  const [findings, setFindings] = useState<Finding[]>(() => {
+    if (activeScan?.findings && Array.isArray(activeScan.findings) && activeScan.findings.length > 0) {
+      return activeScan.findings as Finding[];
+    }
+    return [];
+  });
   const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !(activeScan?.findings && activeScan.findings.length > 0));
   const showDelayedSkeleton = useDelayedLoading(loading, 150);
   const [fetchError, setFetchError] = useState<string | null>(null);
   type ErrorState = 'session_expired' | 'forbidden' | 'not_found' | 'server_error' | 'network_offline' | null;
@@ -810,7 +815,7 @@ export default function FindingsView() {
     fetchFindings();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    activeScan,
+    activeScan?.id,
     severityFilter,
     categoryFilter,
     readinessFilter,
@@ -847,16 +852,25 @@ export default function FindingsView() {
       if (debouncedFilePathFilter.trim()) params.set('file', debouncedFilePathFilter.trim());
       if (debouncedSearchQuery.trim()) params.set('search', debouncedSearchQuery.trim());
 
-      let res = await fetch(`/api/findings?${params.toString()}`);
+      let res = await fetch(`/api/findings?${params.toString()}`, {
+        cache: 'no-store',
+        headers: { 'Cache-Control': 'no-cache' },
+      });
 
-      // Handle 404 on stale activeScan: self-heal by clearing stale scan and loading general findings
+      // Handle 404: if activeScan has in-memory or persisted findings, preserve them instead of wiping state
       if (res.status === 404 && activeScan) {
-        setActiveScan(null);
-        try {
-          localStorage.removeItem('contriblens_active_scan');
-        } catch (err) {
-          console.debug('Failed to remove active scan from localStorage:', err);
+        if (activeScan.findings && activeScan.findings.length > 0) {
+          const sorted = [...(activeScan.findings as Finding[])].sort((a, b) => {
+            const sevA = SEVERITY_RANK[a.severity?.toUpperCase()] || 0;
+            const sevB = SEVERITY_RANK[b.severity?.toUpperCase()] || 0;
+            if (sevB !== sevA) return sevB - sevA;
+            return getConfidenceScore(b.confidence) - getConfidenceScore(a.confidence);
+          });
+          setFindings(sorted);
+          setLoading(false);
+          return;
         }
+        // If no client findings exist for scanId, attempt general findings fallback without destroying activeScan
         const fallbackParams = new URLSearchParams();
         if (severityFilter !== 'ALL') fallbackParams.set('severity', severityFilter);
         if (categoryFilter !== 'all') fallbackParams.set('category', categoryFilter);
@@ -866,7 +880,10 @@ export default function FindingsView() {
         if (ruleIdFilter !== 'ALL') fallbackParams.set('ruleId', ruleIdFilter);
         if (debouncedFilePathFilter.trim()) fallbackParams.set('file', debouncedFilePathFilter.trim());
         if (debouncedSearchQuery.trim()) fallbackParams.set('search', debouncedSearchQuery.trim());
-        res = await fetch(`/api/findings?${fallbackParams.toString()}`);
+        res = await fetch(`/api/findings?${fallbackParams.toString()}`, {
+          cache: 'no-store',
+          headers: { 'Cache-Control': 'no-cache' },
+        });
       }
 
       // Check if another request superseded this one while waiting for response
@@ -923,6 +940,12 @@ export default function FindingsView() {
       });
 
       setFindings(sorted);
+      if (activeScan && activeScan.id && (!activeScan.findings || activeScan.findings.length === 0)) {
+        const scanToSync = { ...activeScan, findings: sorted };
+        queueMicrotask(() => {
+          setActiveScan(scanToSync);
+        });
+      }
       if (sorted.length > 0) {
         // Resolve intended target finding:
         // Priority 1: In-memory active selection ref (user's recent click)
@@ -960,7 +983,9 @@ export default function FindingsView() {
             lastSelectedIdRef.current = matched.id;
             lastSyncedUrlParamRef.current = matched.id;
             setSelectedFinding(matched);
-            setSelectedFindingId(matched.id);
+            if (selectedFindingId !== matched.id) {
+              setSelectedFindingId(matched.id);
+            }
             syncFiltersToUrl({ findingId: matched.id });
             ensureFindingVisible(matched);
 
@@ -978,7 +1003,9 @@ export default function FindingsView() {
             lastSelectedIdRef.current = null;
             lastSyncedUrlParamRef.current = null;
             setSelectedFinding(null);
-            setSelectedFindingId(null);
+            if (selectedFindingId !== null) {
+              setSelectedFindingId(null);
+            }
             if (typeof window !== 'undefined') {
               try {
                 sessionStorage.removeItem(`contriblens_selected_finding_${activeScan?.id || 'active'}`);
@@ -993,7 +1020,9 @@ export default function FindingsView() {
             lastSelectedIdRef.current = fallback.id;
             lastSyncedUrlParamRef.current = fallback.id;
             setSelectedFinding(fallback);
-            setSelectedFindingId(fallback.id);
+            if (selectedFindingId !== fallback.id) {
+              setSelectedFindingId(fallback.id);
+            }
             syncFiltersToUrl({ findingId: fallback.id });
           }
         } else {
@@ -1002,7 +1031,9 @@ export default function FindingsView() {
           lastSelectedIdRef.current = targetFinding.id;
           lastSyncedUrlParamRef.current = targetFinding.id;
           setSelectedFinding(targetFinding);
-          setSelectedFindingId(targetFinding.id);
+          if (selectedFindingId !== targetFinding.id) {
+            setSelectedFindingId(targetFinding.id);
+          }
           syncFiltersToUrl({ findingId: targetFinding.id });
         }
         hasInitializedSelectionRef.current = true;
@@ -1010,7 +1041,9 @@ export default function FindingsView() {
         lastSelectedIdRef.current = null;
         lastSyncedUrlParamRef.current = null;
         setSelectedFinding(null);
-        setSelectedFindingId(null);
+        if (selectedFindingId !== null) {
+          setSelectedFindingId(null);
+        }
       }
     } catch (err: any) {
       if (currentSeq !== fetchSequenceRef.current) return;
@@ -1041,7 +1074,9 @@ export default function FindingsView() {
         lastSelectedIdRef.current = null;
         lastSyncedUrlParamRef.current = null;
         setSelectedFinding(null);
-        setSelectedFindingId(null);
+        if (selectedFindingId !== null) {
+          setSelectedFindingId(null);
+        }
         return;
       }
 
@@ -1060,7 +1095,9 @@ export default function FindingsView() {
         lastSelectedIdRef.current = match.id;
         lastSyncedUrlParamRef.current = match.id;
         setSelectedFinding(match);
-        setSelectedFindingId(match.id);
+        if (selectedFindingId !== match.id) {
+          setSelectedFindingId(match.id);
+        }
         ensureFindingVisible(match);
       }
     };
@@ -1069,7 +1106,7 @@ export default function FindingsView() {
     return () => {
       window.removeEventListener('popstate', handlePopState);
     };
-  }, [findings, setSelectedFindingId, ensureFindingVisible]);
+  }, [findings, selectedFindingId, setSelectedFindingId, ensureFindingVisible]);
 
   // Handle external Next.js router navigation into this page with findingId search param
   const urlFindingId = searchParams?.get('findingId') || searchParams?.get('finding');
@@ -1107,10 +1144,12 @@ export default function FindingsView() {
     if (match) {
       lastSelectedIdRef.current = match.id;
       setSelectedFinding(match);
-      setSelectedFindingId(match.id);
+      if (selectedFindingId !== match.id) {
+        setSelectedFindingId(match.id);
+      }
       ensureFindingVisible(match);
     }
-  }, [urlFindingId, findings, setSelectedFindingId, ensureFindingVisible]);
+  }, [urlFindingId, findings, selectedFindingId, setSelectedFindingId, ensureFindingVisible]);
 
   const handleToggleReview = async (finding: Finding) => {
     if (updatingReviewId === finding.id) return;
