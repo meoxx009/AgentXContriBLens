@@ -134,7 +134,7 @@ describe('Skeleton Loaders Component System', () => {
       expect(html).toContain('Loading user profile settings...');
     });
 
-    it('renders AuthModalSkeleton mirroring auth modal form inputs and oauth button', () => {
+    it('renders AuthModalSkeleton mirroring auth modal form inputs', () => {
       const html = renderToStaticMarkup(React.createElement(AuthModalSkeleton, { label: 'auth modal' }));
       expect(html).toContain('role="status"');
       expect(html).toContain('aria-busy="true"');

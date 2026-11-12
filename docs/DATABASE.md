@@ -20,7 +20,7 @@
 | display_name | text | optional |
 | username | text | optional, unique when present |
 | phone_e164 | text | optional, unique when present, E.164-validated (v2.1 login; field kept) |
-| github_id | text | nullable — GitHub OAuth link |
+| github_id | text | nullable — legacy reference, inactive |
 | github_username | text | nullable |
 | bio | text | optional, length-limited |
 | experience_level | text | beginner / intermediate / advanced |

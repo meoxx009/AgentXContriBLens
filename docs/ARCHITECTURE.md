@@ -108,7 +108,7 @@ app/
   app/contributions/page.tsx  app/contributions/[routeId]/page.tsx
   app/issue-drafts/page.tsx
   app/profile/page.tsx
-  api/auth/{signup,login,logout,me,oauth/github}/route.ts
+  api/auth/{signup,login,logout,me}/route.ts
   api/scans/route.ts  api/scans/[scanId]/route.ts
   api/findings/route.ts  api/findings/[findingId]/route.ts
   api/routes/route.ts  api/routes/[routeId]/route.ts

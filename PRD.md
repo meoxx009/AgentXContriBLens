@@ -14,7 +14,7 @@
 | Audience | Students, first-time contributors, open-source maintainers, hackathon judges |
 | Deployment | Free-first (Vercel Hobby + Supabase Free + OSV.dev free + Google AI Studio free tier) |
 | AI provider | **Gemma 4 31B** (`gemma-4-31b-it`, primary) → `gemini-2.5-flash` (fallback) → deterministic rule engine (keyless). Server-side only via `@google/genai`. |
-| Auth | Email + password + **GitHub OAuth** (phone login deferred to v2.1) |
+| Auth | Email + password (phone login deferred to v2.1) |
 | Explicitly excluded | Hacktoberfest page, auto-PR/issue publishing, team features, any paid dependency |
 
 ## 2. Product Vision
@@ -86,10 +86,9 @@ Login / Signup (email or GitHub)
 
 ### FR-02 Authentication
 - Email + password signup (strength meter, ToS consent), email login.
-- **Continue with GitHub** OAuth one-click.
 - Password reset email via Resend. Inline validation, no browser alerts.
 - Phone (E.164) login: DEFERRED to v2.1 (schema keeps the field optional).
-- AC: signup, login, OAuth, logout, refresh persistence, guards, safe invalid-credential errors.
+- AC: signup, login, logout, refresh persistence, guards, safe invalid-credential errors.
 
 ### FR-03 Anonymous Preview [REMOVED — reason: real-data only]
 - Removed per G2: The webapp is real-data only. Users sign in/log in and scan real repositories. Demo/fixture preview content does not appear. Authenticated users always see their own real data.

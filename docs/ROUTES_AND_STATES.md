@@ -9,7 +9,7 @@
 | Route | Purpose | Auth |
 |---|---|---|
 | `/` | Landing page (Sections A–J) | Public |
-| `/login` | Email login + Continue with GitHub | Public |
+| `/login` | Email login | Public |
 | `/signup` | Account creation | Public |
 | `/forgot-password` | Password reset (Resend email) | Public |
 | `/stats` | Public live counters | Public |
@@ -48,7 +48,6 @@ idle → preview_submitting → preview_scan (1 live keyless scan/session)
 ```text
 anonymous → signup_submitting → authenticated
 anonymous → login_submitting   → authenticated
-anonymous → oauth_redirect     → authenticated
 anonymous → auth_error
 authenticated → signing_out → anonymous
 ```

@@ -30,7 +30,7 @@ Build in small vertical slices. Each phase must leave the app runnable and conne
 
 ## 5. Phase 3 — Authentication
 
-- Email + password signup (strength meter, ToS) · email login · **GitHub OAuth** · forgot-password (Resend) · logout · route guards · refresh persistence · safe invalid-credential errors. (Phone deferred v2.1.)
+- Email + password signup (strength meter, ToS) · email login · forgot-password (Resend) · logout · route guards · refresh persistence · safe invalid-credential errors. (Phone deferred v2.1.)
 
 ## 6. Phase 4 — App Shell + Dashboard
 
@@ -90,7 +90,7 @@ Build in small vertical slices. Each phase must leave the app runnable and conne
 | 0 | Foundations | Scaffold, tokens, scripts, Supabase migrations, ported domain engine |
 | 1 | Landing | Sections A–J, glass + smoke, Try-without-account |
 | 2 | Anonymous preview | Labelled demo + 1 keyless scan/session |
-| 3 | Auth | Email + GitHub OAuth + Resend reset + glass shell |
+| 3 | Auth | Email auth + Resend reset + glass shell |
 | 4 | Scanner domain | Rules, redaction, readiness, skills mapping, partial scan |
 | 5 | Scan API + diff | Persistence, OSV, typed errors, dashboard history |
 | 6 | Findings | Split view, evidence hash, engine-labelled explanations |

@@ -783,7 +783,7 @@ export function ProfileSkeleton({
 
 /**
  * AuthModalSkeleton
- * Mirrors AuthModal form layout when initializing or submitting OAuth.
+ * Mirrors AuthModal form layout when loading authentication form.
  */
 export function AuthModalSkeleton({
   label = 'authentication form',
@@ -798,15 +798,6 @@ export function AuthModalSkeleton({
       className="space-y-5 w-full"
     >
       <span className="sr-only">Loading {label}...</span>
-
-      {/* Top OAuth Button Skeleton */}
-      <div className="space-y-4" aria-hidden="true">
-        <Skeleton className="h-11 w-full rounded-xl" />
-        <div className="flex items-center justify-center relative my-2">
-          <div className="border-t border-platinumSilver/15 w-full" />
-          <Skeleton className="h-3 w-32 rounded-full absolute" />
-        </div>
-      </div>
 
       {/* Form input fields */}
       <div className="space-y-4" aria-hidden="true">

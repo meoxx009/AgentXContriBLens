@@ -109,6 +109,6 @@ When deploying to Vercel or any standard Next.js hosting environment, configure 
 
 ## 6. Known Backlog Items (v2.1 Scope)
 
-* **Phone Authentication:** Deferred to v2.1 per architecture specifications (email and GitHub OAuth currently active).
+* **Phone Authentication:** Deferred to v2.1 per architecture specifications (email auth currently active).
 * **Automated PR Opening:** Explicitly prohibited by design invariant (*"Human approves all external publication"*). Maintainers receive copyable PR drafts and Markdown packs instead of unvetted bot pull requests.
 * **Extended Multi-File Scanners:** Deep repository scanning is bounded to 60 files / 3 MB max to ensure free-tier execution safety and prevent worker timeouts.

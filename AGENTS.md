@@ -20,7 +20,7 @@
 
 ## Locked Decisions (do not change)
 
-- Stack: Next.js 15 App Router + React 19 + TS strict + Tailwind 3.4 + Zod + Vitest · Supabase (email + GitHub OAuth) + RLS + local-JSON fallback · Vercel free · OSV.dev (no key) · Upstash · Resend · GitHub Actions CI.
+- Stack: Next.js 15 App Router + React 19 + TS strict + Tailwind 3.4 + Zod + Vitest · Supabase (email auth) + RLS + local-JSON fallback · Vercel free · OSV.dev (no key) · Upstash · Resend · GitHub Actions CI.
 - AI chain (server-only): `gemma-4-31b-it` (primary, `GEMINI_MODEL=gemma-4-31b-it`) → `gemini-2.5-flash` (fallback) → deterministic rule engine (keyless). UI labels the engine used.
 - Design: 12-token palette + liquid glass + smoky ambient background per `DESIGN.md` — no second design system, no neon lime/indigo/mint/rainbow.
 - Features: anonymous preview (labelled Demo), partial scan, scan diff, Skills Gap, /stats. NO Hacktoberfest page. NO phone auth (v2.1). NO auto-PR. NO paid dependencies.

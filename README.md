@@ -292,7 +292,7 @@ graph TB
 | **Styling & Theme** | [Tailwind CSS 3.4](https://tailwindcss.com/) | Custom liquid glass design system, 12-token dark palette, smoky ambient background |
 | **AI Inference** | [Google DeepMind Gemma 4 31B](https://ai.google.dev/gemma/docs) | Server-side structured explanation generation (`gemma-4-31b-it`) |
 | **Fallback AI** | [Gemini 2.5 Flash](https://ai.google.dev/) | High-speed fallback when primary model is rate-limited |
-| **Database & Auth** | [Supabase](https://supabase.com/) | PostgreSQL with Row-Level Security (RLS) + GitHub OAuth & email auth |
+| **Database & Auth** | [Supabase](https://supabase.com/) | PostgreSQL with Row-Level Security (RLS) + email auth |
 | **Local Fallback DB** | Atomic JSON Engine | Zero-dependency file persistence in `.data/` for local standalone dev |
 | **Vulnerability Feed** | [OSV.dev API](https://osv.dev/) | Keyless Open Source Vulnerability advisory lookups for manifests |
 | **Testing Engine** | [Vitest 3.0](https://vitest.dev/) | 57 test files, **701 automated unit, integration, and security tests** |
@@ -361,7 +361,7 @@ src/
 │   ├── api/                             # Internal REST API & SSE Endpoints
 │   │   ├── agent/run/                   # 7-Tool Agent Orchestration & SSE Event Stream
 │   │   ├── ai/plan/                     # Grounded Plan & Route Generation Engine
-│   │   ├── auth/                        # Session, Login, Signup, GitHub OAuth, Refresh
+│   │   ├── auth/                        # Session, Login, Signup, Email Auth, Refresh
 │   │   ├── drafts/                      # Maintainer-Reviewable Issue Drafts
 │   │   ├── findings/                    # Findings API & AI Finding Suggestions
 │   │   ├── routes/                      # Contribution Routes & Markdown Pack Downloads

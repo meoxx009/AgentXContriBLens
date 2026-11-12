@@ -228,7 +228,7 @@ Reusable primitives: `GlassHeader / GlassNav`, `GlassPanel`, `GlassPill / GlassB
 
 ## 8. Auth Screens
 
-Dark premium layout, orange ambient top glow, centered glass card. Signup: email, password, confirm, terms (phone field hidden in v2). Login: email + password + "Continue with GitHub". States: idle/focused/invalid/validating/submitting/success/server-error — inline errors only.
+Dark premium layout, orange ambient top glow, centered glass card. Signup: email, password, confirm, terms (phone field hidden in v2). Login: email + password. States: idle/focused/invalid/validating/submitting/success/server-error — inline errors only.
 
 ## 9. Authenticated Shell
 

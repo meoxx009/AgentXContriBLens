@@ -40,7 +40,7 @@ All quality gates and end-to-end validation suites are 100% green:
   * Removed `?demo=true`, `previewLimitReached`, and `runDemoScan` from `ScanView.tsx`.
 * **Real Data Shell & View Contracts:**
   * Initialized `DashboardView`, `FindingsView`, `ContributionsView`, and `RouteDetailsView` to empty arrays (`[]`) so newly signed-up users only see their own real scans with real empty states.
-  * Stripped demo-scan fallbacks (`demo-scan-001`, `demo-finding-1`, `demo-route-1`, `demo-draft-1`) from `src/lib/db.ts` and all API routes (`/api/scans/[scanId]`, `/api/findings`, `/api/routes`, `/api/drafts`, `/api/explain`, `/api/auth/oauth/github`).
+  * Stripped demo-scan fallbacks (`demo-scan-001`, `demo-finding-1`, `demo-route-1`, `demo-draft-1`) from `src/lib/db.ts` and all API routes (`/api/scans/[scanId]`, `/api/findings`, `/api/routes`, `/api/drafts`, `/api/explain`).
   * Removed `isDemoUser` and "Demo Mode" pill from `src/app/app/layout.tsx`.
 * **Documentation Synchronization:**
   * Updated [ROUTES_AND_STATES.md](file:///c:/Users/ezyre/Documents/CONTRIBUTIONLENS/ROUTES_AND_STATES.md) (removed §2.1 preview state machine).

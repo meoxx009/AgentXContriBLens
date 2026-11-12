@@ -21,13 +21,12 @@ export async function POST(req: Request) {
         if (client) {
           const { data: { user: sbUser }, error } = await client.auth.getUser(supabaseToken);
           if (!error && sbUser) {
-            const email = sbUser.email || `contributor_${sbUser.id.substring(0, 8)}@users.noreply.github.com`;
+            const email = sbUser.email || `contributor_${sbUser.id.substring(0, 8)}@example.com`;
             const name =
               sbUser.user_metadata?.full_name ||
               sbUser.user_metadata?.name ||
-              sbUser.user_metadata?.user_name ||
               email.split("@")[0] ||
-              "GitHub Contributor";
+              "Contributor";
 
             let user = db.getUserById(sbUser.id) || db.getUserByEmail(email);
             if (!user) {

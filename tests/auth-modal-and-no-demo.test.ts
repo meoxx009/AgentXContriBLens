@@ -41,8 +41,8 @@ describe("Auth Modal & Zero Demo Content Verification", () => {
   describe("2. Clean, Premium Login and Signup Screens", () => {
     it("login page renders real authentication mechanisms cleanly", () => {
       expect(loginContent).toContain("Welcome back to ContribLens");
-      expect(loginContent).toContain("Continue with GitHub");
-      expect(loginContent).toContain("or continue with email");
+      expect(loginContent).not.toContain("Continue with GitHub");
+      expect(loginContent).not.toContain("or continue with email");
       expect(loginContent).toContain("login-email");
       expect(loginContent).toContain("login-password");
       expect(loginContent).toContain("/forgot-password");
@@ -52,8 +52,8 @@ describe("Auth Modal & Zero Demo Content Verification", () => {
 
     it("signup page renders real registration mechanisms cleanly", () => {
       expect(signupContent).toContain("Create your ContribLens account");
-      expect(signupContent).toContain("Continue with GitHub");
-      expect(signupContent).toContain("or sign up with email");
+      expect(signupContent).not.toContain("Continue with GitHub");
+      expect(signupContent).not.toContain("or sign up with email");
       expect(signupContent).toContain("signup-email");
       expect(signupContent).toContain("signup-password");
       expect(signupContent).toContain("signup-confirm-password");

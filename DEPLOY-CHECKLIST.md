@@ -1,6 +1,6 @@
 # ContribLens — Vercel Deployment & Production Checklist
 
-This checklist documents the exact setup required to deploy and redeploy ContribLens on Vercel with full functionality (Next.js 15 App Router, React 19, Supabase with local-JSON fallback, Gemini AI chain, and GitHub OAuth).
+This checklist documents the exact setup required to deploy and redeploy ContribLens on Vercel with full functionality (Next.js 15 App Router, React 19, Supabase with local-JSON fallback, Gemini AI chain, and email authentication).
 
 ---
 
@@ -42,24 +42,7 @@ Set these variables in the **Vercel Project Settings → Environment Variables**
 
 ---
 
-## 3. GitHub OAuth Application Setup
-
-To enable "Sign in with GitHub":
-
-1. In GitHub, go to **Settings → Developer settings → OAuth Apps → New OAuth App**.
-2. Fill out the application details:
-   - **Application name**: `ContribLens`
-   - **Homepage URL**: `https://hacktoberfest-contri-blens.vercel.app`
-   - **Authorization callback URL**: `https://hacktoberfest-contri-blens.vercel.app/api/auth/callback`
-3. Register the application and copy the **Client ID** and generate a **Client Secret**.
-4. In your Supabase Dashboard:
-   - Go to **Authentication → Providers → GitHub**.
-   - Enable GitHub and paste your **Client ID** and **Client Secret**.
-   - Ensure the Supabase redirect URL is configured in GitHub if using Supabase Auth.
-
----
-
-## 4. Supabase Database Schema
+## 3. Supabase Database Schema
 
 When using Supabase, ensure the following core tables are created (from `src/lib/db.ts`):
 
@@ -89,7 +72,7 @@ After Vercel finishes the deployment build, execute these five verification step
 
 ### Check 2: Auth Endpoints & Public Health
 - Visit: `https://hacktoberfest-contri-blens.vercel.app/login` and `/signup`
-- **Expectation**: Forms render cleanly, email/password validation active, GitHub OAuth button displays.
+- **Expectation**: Forms render cleanly, email/password validation active, email authentication displays cleanly.
 - Test endpoint: `GET /api/integrations/status` returns `{ success: true, ... }` with zero exposed secrets.
 
 ### Check 3: Deterministic Public Repository Scan

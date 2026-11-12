@@ -20,7 +20,6 @@
 |---|---|
 | `POST /api/auth/signup` | email + password + confirmation + terms → Supabase identity + profile |
 | `POST /api/auth/login` | email + password → session (safe error never reveals account existence) |
-| `POST /api/auth/oauth/github` | GitHub OAuth code exchange → session + `profiles.github_id` link |
 | `POST /api/auth/logout` | destroy session |
 | `GET /api/auth/me` | current user + preferences |
 | `POST /api/auth/forgot-password` | Resend reset email |

@@ -5,7 +5,6 @@ import { POST as signup } from '@/app/api/auth/signup/route';
 import { POST as login } from '@/app/api/auth/login/route';
 import { POST as logout } from '@/app/api/auth/logout/route';
 import { GET as getMe } from '@/app/api/auth/me/route';
-import { POST as githubOAuth } from '@/app/api/auth/oauth/github/route';
 import { POST as forgotPassword } from '@/app/api/auth/forgot-password/route';
 import { GET as getScans, POST as createScan } from '@/app/api/scans/route';
 import { GET as getScanById } from '@/app/api/scans/[scanId]/route';
@@ -164,25 +163,10 @@ describe('F2 — Backend Hardening & Provider Failure Drill Suites', () => {
       expect(data.user.id).toBe(userA.id);
     });
 
-    it('POST /api/auth/oauth/github returns graceful typed error when unconfigured', async () => {
-      // Missing code
-      const resMissing = await githubOAuth(createRequest('http://localhost:3000/api/auth/oauth/github', 'POST', {}));
-      expect(resMissing.status).toBe(400);
-      const dataMissing = await resMissing.json();
-      expect(dataMissing.errorCode).toBe('AUTH_INVALID_INPUT');
-
-      // Unconfigured with arbitrary external code
-      const resUnconf = await githubOAuth(createRequest('http://localhost:3000/api/auth/oauth/github', 'POST', { code: 'arbitrary_ext_code' }));
-      expect(resUnconf.status).toBe(503);
-      const dataUnconf = await resUnconf.json();
-      expect(dataUnconf.errorCode).toBe('AUTH_PROVIDER_UNAVAILABLE');
-
-      // Simulated / mock code
-      const resMock = await githubOAuth(createRequest('http://localhost:3000/api/auth/oauth/github', 'POST', { code: 'mock_code' }));
-      expect(resMock.status).toBe(200);
-      const dataMock = await resMock.json();
-      expect(dataMock.ok).toBe(true);
-      expect(dataMock.user.githubUsername).toBe('contributor');
+    it('enforces email-first authentication with zero GitHub OAuth endpoint exposure', async () => {
+      // Confirms oauth/github route has been completely unmounted
+      const oauthRouteExists = fs.existsSync(path.join(process.cwd(), 'src/app/api/auth/oauth/github/route.ts'));
+      expect(oauthRouteExists).toBe(false);
     });
 
     it('POST /api/auth/forgot-password validates email and never reveals account existence', async () => {

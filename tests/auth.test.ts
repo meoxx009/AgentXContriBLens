@@ -10,11 +10,6 @@ import {
   AUTH_COOKIE_NAME,
 } from "@/lib/auth";
 import { POST as logoutHandler } from "@/app/api/auth/logout/route";
-import {
-  formatOAuthError,
-  isProviderDisabledError,
-  GITHUB_PROVIDER_DISABLED_MESSAGE,
-} from "@/lib/oauth-error";
 import { calculatePasswordStrength } from "@/lib/password";
 import { db } from "@/lib/db";
 import { POST as loginHandler } from "@/app/api/auth/login/route";
@@ -151,7 +146,7 @@ describe("Prompt P5 — Authentication & Glass Auth Screens", () => {
       expect(loginContent).toContain("bg-electricTangerine");
       expect(loginContent).toContain("min-h-[44px]");
       expect(loginContent).toContain("press-spring");
-      expect(loginContent).toContain("Continue with GitHub");
+      expect(loginContent).not.toContain("Continue with GitHub");
       expect(loginContent).toContain("role=\"alert\"");
     });
 
@@ -176,56 +171,53 @@ describe("Prompt P5 — Authentication & Glass Auth Screens", () => {
     });
   });
 
-  describe("GitHub OAuth Provider Hardening & Friendly Error Mapping", () => {
-    it("maps mocked signInWithOAuth rejection with 'provider is not enabled' to actionable dashboard instructions without exposing raw JSON", () => {
-      // 1. Raw JSON error returned by Supabase when provider is disabled
-      const mockSupabaseError = {
-        code: 400,
-        error_code: "validation_failed",
-        msg: "Unsupported provider: provider is not enabled",
-      };
-
-      expect(isProviderDisabledError(mockSupabaseError)).toBe(true);
-
-      const formatted = formatOAuthError(mockSupabaseError);
-      expect(formatted).toBe(GITHUB_PROVIDER_DISABLED_MESSAGE);
-      expect(formatted).toContain("Authentication → Providers → GitHub");
-      // Invariant: NEVER exposes raw JSON or error codes to end user
-      expect(formatted).not.toContain("validation_failed");
-      expect(formatted).not.toContain("400");
-      expect(formatted).not.toContain('{"code":');
+  describe("Email-Only Authentication & Complete GitHub Auth Removal", () => {
+    it("verifies login page contains email/password auth and zero GitHub OAuth elements", () => {
+      expect(loginContent).toContain('name="email"');
+      expect(loginContent).toContain('name="password"');
+      expect(loginContent).not.toContain("Continue with GitHub");
+      expect(loginContent).not.toContain("signInWithOAuth");
+      expect(loginContent).not.toContain("oauthLoading");
     });
 
-    it("handles Error objects and serialized strings containing 'provider is not enabled'", () => {
-      const errorObj = new Error("Unsupported provider: provider is not enabled");
-      expect(isProviderDisabledError(errorObj)).toBe(true);
-      expect(formatOAuthError(errorObj)).toBe(GITHUB_PROVIDER_DISABLED_MESSAGE);
-
-      const errorStr = '{"code":400,"error_code":"validation_failed","msg":"Unsupported provider: provider is not enabled"}';
-      expect(isProviderDisabledError(errorStr)).toBe(true);
-      expect(formatOAuthError(errorStr)).toBe(GITHUB_PROVIDER_DISABLED_MESSAGE);
+    it("verifies signup page contains email/password auth and zero GitHub OAuth elements", () => {
+      expect(signupContent).toContain('name="email"');
+      expect(signupContent).toContain('name="password"');
+      expect(signupContent).not.toContain("Continue with GitHub");
+      expect(signupContent).not.toContain("signInWithOAuth");
+      expect(signupContent).not.toContain("oauthLoading");
     });
 
-    it("leaves unrelated errors untouched and passes standard fallback", () => {
-      const networkError = new Error("Network connection lost");
-      expect(isProviderDisabledError(networkError)).toBe(false);
-      expect(formatOAuthError(networkError)).toBe("Network connection lost");
-
-      const nullError = null;
-      expect(isProviderDisabledError(nullError)).toBe(false);
-      const fallback = formatOAuthError(nullError, "TEST-REF");
-      expect(fallback).toBe("Unable to complete GitHub sign-in (Ref: TEST-REF). Please retry.");
+    it("verifies AuthModal component has zero GitHub OAuth elements", () => {
+      const authModalPath = path.join(process.cwd(), "src", "components", "auth", "AuthModal.tsx");
+      const authModalContent = fs.readFileSync(authModalPath, "utf-8");
+      expect(authModalContent).not.toContain("Continue with GitHub");
+      expect(authModalContent).not.toContain("handleGitHubOAuth");
+      expect(authModalContent).not.toContain("oauthLoading");
     });
 
-    it("verifies login, signup, and callback screens implement friendly OAuth error mapping", () => {
-      expect(loginContent).toContain("formatOAuthError");
-      expect(signupContent).toContain("formatOAuthError");
+    it("verifies ProfileView has zero Connect to GitHub elements or OAuth links", () => {
+      const profilePath = path.join(process.cwd(), "src", "components", "views", "ProfileView.tsx");
+      const profileContent = fs.readFileSync(profilePath, "utf-8");
+      expect(profileContent).not.toContain("Connect GitHub");
+      expect(profileContent).not.toContain("Connect to GitHub");
+      expect(profileContent).not.toContain("/api/auth/oauth/github");
+      expect(profileContent).not.toContain("GitHub Connection");
+    });
 
-      const callbackPath = path.join(process.cwd(), "src", "app", "auth", "callback", "page.tsx");
-      const callbackContent = fs.readFileSync(callbackPath, "utf-8");
-      expect(callbackContent).toContain("formatOAuthError");
-      expect(callbackContent).toContain("exchangeCodeForSession");
-      expect(callbackContent).toContain("destination");
+    it("verifies GitHub OAuth routes and files have been removed from the repository", () => {
+      expect(fs.existsSync(path.join(process.cwd(), "src", "app", "api", "auth", "oauth"))).toBe(false);
+      expect(fs.existsSync(path.join(process.cwd(), "src", "app", "api", "auth", "callback"))).toBe(false);
+      expect(fs.existsSync(path.join(process.cwd(), "src", "app", "auth", "callback"))).toBe(false);
+      expect(fs.existsSync(path.join(process.cwd(), "src", "lib", "oauth-error.ts"))).toBe(false);
+    });
+
+    it("verifies scanner GitHub client strictly uses GITHUB_TOKEN for rate limits and did not break", () => {
+      const scannerGithubPath = path.join(process.cwd(), "src", "lib", "scanner", "github.ts");
+      const scannerGithubContent = fs.readFileSync(scannerGithubPath, "utf-8");
+      expect(scannerGithubContent).toContain("process.env.GITHUB_TOKEN");
+      expect(scannerGithubContent).toContain("fetchRepoMetadata");
+      expect(scannerGithubContent).toContain("fetchBoundedRepositoryTree");
     });
   });
 

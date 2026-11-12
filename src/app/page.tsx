@@ -130,7 +130,7 @@ export default function LandingPage() {
     },
     {
       q: "How do I get started with ContribLens?",
-      a: "Sign up for a free account with your email or GitHub to run live security scans on any public repository. ContribLens provides deterministic verification, grounded AI explanations, and beginner-ready PR plans with zero paid dependencies.",
+      a: "Sign up for a free account with your email to run live security scans on any public repository. ContribLens provides deterministic verification, grounded AI explanations, and beginner-ready PR plans with zero paid dependencies.",
     },
     {
       q: "What visual design system does ContribLens use?",

@@ -43,7 +43,7 @@ Public GitHub repo
 | Framework | Next.js 15 (App Router) · React 19 · TypeScript strict |
 | Styling | Tailwind CSS 3.4 + liquid-glass design system + smoky ambient background |
 | Validation / Tests | Zod · Vitest |
-| Auth/DB | Supabase (email + GitHub OAuth, PostgreSQL + RLS) + local-JSON fallback |
+| Auth/DB | Supabase (email auth, PostgreSQL + RLS) + local-JSON fallback |
 | AI | **Gemma 4 31B** (`gemma-4-31b-it`) → `gemini-2.5-flash` → deterministic engine (server-only) |
 | Infra | OSV.dev (free, no key) · Upstash Redis (rate limits) · Resend (email) · Vercel Analytics · GitHub Actions CI |
 
